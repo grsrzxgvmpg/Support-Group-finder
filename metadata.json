@@ -1,0 +1,8 @@
+{
+  "name": "Support Group Finder",
+  "description": "An AI-powered tool to locate verified mental health support groups locally and online.",
+  "repository": "https://github.com/grsrzxgvmpg/Support-Group-finder",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
