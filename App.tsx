@@ -187,6 +187,7 @@ const App: React.FC = () => {
   const debouncedFilters = useDebounce(searchState.filters, 300);
   const debouncedSort = useDebounce(searchState.sortBy, 300);
   const hasExistingResults = useRef(searchState.results.length > 0);
+  const shouldAutoSearch = useRef(false);
 
   // Auto-search when filters or sort change (if we have existing results and search terms)
   useEffect(() => {
@@ -200,6 +201,14 @@ const App: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [debouncedFilters, debouncedSort]);
+
+  // Auto-search when recent search is clicked
+  useEffect(() => {
+    if (shouldAutoSearch.current && searchState.query && searchState.location) {
+      shouldAutoSearch.current = false;
+      handleSearch();
+    }
+  }, [searchState.query, searchState.location]);
 
   // Persist search state to localStorage whenever it changes
   useEffect(() => {
@@ -424,10 +433,8 @@ const App: React.FC = () => {
       }
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
     // Check for updates when app comes to foreground
-    window.addEventListener('focus', () => {
+    const handleFocus = () => {
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(registrations => {
           registrations.forEach(registration => {
@@ -435,15 +442,20 @@ const App: React.FC = () => {
           });
         });
       }
-    });
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
     };
   }, []);
 
   const handleRecentSearchClick = (query: string, location: string) => {
     setSearchState(prev => ({ ...prev, query, location }));
+    shouldAutoSearch.current = true;
   };
 
   const handleTopicClick = (topic: string) => {
