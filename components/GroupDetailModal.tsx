@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { SupportGroup } from '../types';
-import { X, MapPin, Calendar, Globe, Phone, Share2, Star, ShieldCheck, ExternalLink, Search } from 'lucide-react';
+import { X, MapPin, Calendar, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag } from 'lucide-react';
+import { useToast } from './Toast';
 
 interface GroupDetailModalProps {
   group: SupportGroup;
@@ -8,171 +9,360 @@ interface GroupDetailModalProps {
 }
 
 export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClose }) => {
-  
+  const { showToast } = useToast();
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Focus management - focus close button when modal opens
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+
+    // Handle escape key
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [onClose]);
+
+  // Format full address
+  const getFullAddress = () => {
+    if (group.address) {
+      const parts = [group.address];
+      if (group.city) parts.push(group.city);
+      if (group.state) parts.push(group.state);
+      if (group.zipCode) parts.push(group.zipCode);
+      return parts.join(', ');
+    }
+    return group.location;
+  };
+
   const handleShare = async () => {
+    const shareText = [
+      group.name,
+      '',
+      group.address && `Address: ${getFullAddress()}`,
+      group.phoneNumber && `Phone: ${group.phoneNumber}`,
+      group.schedule && `Schedule: ${group.schedule}`,
+      group.website && `Website: ${group.website}`,
+      '',
+      group.url
+    ].filter(Boolean).join('\n');
+
     if (navigator.share) {
       try {
         await navigator.share({
           title: group.name,
-          text: `Check out this support group: ${group.name}`,
+          text: shareText,
           url: group.url
         });
       } catch (err) {
         console.log("Error sharing", err);
       }
     } else {
-      if(group.url) {
-          navigator.clipboard.writeText(group.url);
-          alert("Link copied to clipboard!");
-      }
+      navigator.clipboard.writeText(shareText);
+      showToast("Group info copied to clipboard!", "success");
     }
   };
 
-  // Prevent clicks inside the modal from closing it
+  const handleCopyAddress = () => {
+    const address = getFullAddress();
+    navigator.clipboard.writeText(address);
+    showToast("Address copied!", "success");
+  };
+
+  const handleCopyPhone = () => {
+    if (group.phoneNumber) {
+      navigator.clipboard.writeText(group.phoneNumber);
+      showToast("Phone number copied!", "success");
+    }
+  };
+
+  const handleGetDirections = () => {
+    const address = getFullAddress();
+    const mapsUrl = group.latitude && group.longitude
+      ? `https://www.google.com/maps/dir/?api=1&destination=${group.latitude},${group.longitude}`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+    window.open(mapsUrl, '_blank');
+  };
+
   const handleModalClick = (e: React.MouseEvent) => {
     e.stopPropagation();
   };
 
   return (
-    <div 
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 sm:p-6 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
       onClick={onClose}
     >
-      <div 
+      <div
+        ref={modalRef}
         className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-300 flex flex-col max-h-[85vh]"
         onClick={handleModalClick}
       >
         {/* Header Section */}
         <div className="relative bg-teal-50 p-6 pb-8 border-b border-teal-100/50 shrink-0">
-            <button 
-                onClick={onClose}
-                className="absolute top-4 right-4 p-2 bg-white/50 hover:bg-white rounded-full text-gray-500 hover:text-gray-800 transition-colors"
-            >
-                <X size={20} />
-            </button>
-            
-            <div className="flex flex-col gap-3">
-                 <div className="flex gap-2">
-                    {group.sourceName && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
-                        {group.sourceName}
-                        </span>
-                    )}
-                 </div>
-                 <h2 className="text-2xl font-bold text-gray-900 leading-tight">
-                    {group.name}
-                 </h2>
-                 <div className="flex items-center text-sm text-gray-500">
-                    <MapPin size={16} className="text-teal-600 mr-1.5" />
-                    {group.location}
-                 </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close modal"
+            className="absolute top-4 right-4 p-2 bg-white/50 hover:bg-white rounded-full text-gray-500 hover:text-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500"
+          >
+            <X size={20} />
+          </button>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-2 flex-wrap">
+              {group.sourceName && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                  {group.sourceName}
+                </span>
+              )}
+              {group.groupType && group.groupType !== 'Support Group' && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                  {group.groupType}
+                </span>
+              )}
+              {(group.isOnline || group.location.toLowerCase().includes('online')) && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                  Virtual
+                </span>
+              )}
+              {group.isFree && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-green-100 text-green-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                  Free
+                </span>
+              )}
             </div>
+            <h2 id="modal-title" className="text-2xl font-bold text-gray-900 leading-tight">
+              {group.name}
+            </h2>
+            <div className="flex items-center text-sm text-gray-500">
+              <MapPin size={16} className="text-teal-600 mr-1.5" />
+              {group.location}
+            </div>
+          </div>
         </div>
 
         {/* Scrollable Content */}
         <div className="p-6 overflow-y-auto">
-            {/* Description */}
-            <div className="mb-8">
-                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-2">About this group</h3>
-                <p className="text-gray-600 leading-relaxed text-[15px]">
-                    {group.description}
-                </p>
-                <p className="text-gray-600 leading-relaxed text-[15px] mt-2">
-                    This group provides a safe space for individuals dealing with {group.topic}. It focuses on peer support and shared experiences.
-                </p>
+          {/* Description */}
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-2">About this group</h3>
+            <p className="text-gray-600 leading-relaxed text-[15px]">
+              {group.description}
+            </p>
+          </div>
+
+          {/* Contact Information - Key Section */}
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Contact Information</h3>
+            <div className="bg-gray-50 rounded-xl border border-gray-100 divide-y divide-gray-100">
+              {/* Address */}
+              {group.address && (
+                <div className="p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-3">
+                      <Building2 size={18} className="text-teal-600 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</span>
+                        <p className="text-gray-900 font-medium mt-0.5">{getFullAddress()}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={handleCopyAddress}
+                        className="p-2 hover:bg-gray-200 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        aria-label="Copy address to clipboard"
+                      >
+                        <Copy size={16} className="text-gray-400" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleGetDirections}
+                        className="p-2 hover:bg-gray-200 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        aria-label="Get directions to this address"
+                      >
+                        <Navigation size={16} className="text-teal-600" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Phone */}
+              {group.phoneNumber && (
+                <div className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Phone size={18} className="text-teal-600 shrink-0" />
+                      <div>
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</span>
+                        <p className="text-gray-900 font-medium mt-0.5">
+                          <a href={`tel:${group.phoneNumber}`} className="text-teal-700 hover:underline">
+                            {group.phoneNumber}
+                          </a>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyPhone}
+                      className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+                      title="Copy phone number"
+                    >
+                      <Copy size={16} className="text-gray-400" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Website */}
+              {group.website && (
+                <div className="p-4">
+                  <div className="flex items-center gap-3">
+                    <Globe size={18} className="text-teal-600 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Website</span>
+                      <p className="text-teal-700 font-medium mt-0.5 truncate">
+                        <a href={group.website} target="_blank" rel="noreferrer" className="hover:underline">
+                          {group.website.replace(/^https?:\/\/(www\.)?/, '')}
+                        </a>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Schedule */}
+              {group.schedule && (
+                <div className="p-4">
+                  <div className="flex items-center gap-3">
+                    <Clock size={18} className="text-teal-600 shrink-0" />
+                    <div>
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Schedule</span>
+                      <p className="text-gray-900 font-medium mt-0.5">{group.schedule}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Show message if no contact info */}
+              {!group.address && !group.phoneNumber && !group.website && !group.schedule && (
+                <div className="p-4 text-center">
+                  <p className="text-gray-400 text-sm">Contact the source website for details.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Info Grid */}
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+              <div className="flex items-center gap-2 mb-1">
+                <ShieldCheck size={16} className="text-teal-600" />
+                <span className="font-semibold text-gray-900 text-xs">Source</span>
+              </div>
+              <p className="text-gray-600 text-sm">
+                {group.sourceName || "Web Search"}
+              </p>
             </div>
 
-            {/* Info Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <div className="flex items-center gap-2 mb-1">
-                        <Calendar size={18} className="text-teal-600" />
-                        <span className="font-semibold text-gray-900 text-sm">Schedule</span>
-                    </div>
-                    <p className="text-gray-600 text-sm ml-6.5">
-                        {group.schedule || "Contact for times"}
-                    </p>
-                </div>
-                
-                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <div className="flex items-center gap-2 mb-1">
-                        <ShieldCheck size={18} className="text-teal-600" />
-                        <span className="font-semibold text-gray-900 text-sm">Verified Source</span>
-                    </div>
-                    <p className="text-gray-600 text-sm ml-6.5">
-                        Sourced via {group.sourceName || "Web Search"}
-                    </p>
-                </div>
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+              <div className="flex items-center gap-2 mb-1">
+                <Tag size={16} className="text-teal-600" />
+                <span className="font-semibold text-gray-900 text-xs">Topic</span>
+              </div>
+              <p className="text-gray-600 text-sm capitalize">
+                {group.topic}
+              </p>
             </div>
+          </div>
 
-            {/* Reviews / Ratings Placeholder */}
+          {/* Reviews / Ratings */}
+          {group.rating && (
             <div className="mb-6">
-                 <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Reviews & Ratings</h3>
-                    {group.rating && (
-                        <div className="flex items-center bg-yellow-50 px-2 py-1 rounded-lg">
-                            <Star size={14} className="fill-yellow-400 text-yellow-400 mr-1" />
-                            <span className="font-bold text-gray-900 text-sm">{group.rating}</span>
-                            <span className="text-gray-400 text-xs ml-1">({group.reviewCount || 10})</span>
-                        </div>
-                    )}
-                 </div>
-                 
-                 {group.rating ? (
-                     <div className="p-4 rounded-xl border border-gray-100 bg-white">
-                         <div className="flex items-center gap-2 mb-2">
-                             <div className="flex">
-                                 {[1,2,3,4,5].map(star => (
-                                     <Star key={star} size={14} className={`${star <= Math.round(group.rating!) ? "fill-yellow-400 text-yellow-400" : "text-gray-200"}`} />
-                                 ))}
-                             </div>
-                             <span className="text-sm font-medium text-gray-900">Highly Rated</span>
-                         </div>
-                         <p className="text-sm text-gray-500 italic">"A helpful community resource."</p>
-                     </div>
-                 ) : (
-                    <div className="p-4 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 text-center">
-                        <p className="text-sm text-gray-400">No ratings available for this group yet.</p>
-                    </div>
-                 )}
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Rating</h3>
+                <div className="flex items-center bg-yellow-50 px-2 py-1 rounded-lg">
+                  <Star size={14} className="fill-yellow-400 text-yellow-400 mr-1" />
+                  <span className="font-bold text-gray-900 text-sm">{group.rating.toFixed(1)}</span>
+                  {group.reviewCount && (
+                    <span className="text-gray-400 text-xs ml-1">({group.reviewCount.toLocaleString()})</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-gray-100 bg-white">
+                <div className="flex items-center gap-2">
+                  <div className="flex">
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <Star key={star} size={16} className={`${star <= Math.round(group.rating!) ? "fill-yellow-400 text-yellow-400" : "text-gray-200"}`} />
+                    ))}
+                  </div>
+                  <span className="text-sm font-medium text-gray-700">
+                    {group.rating >= 4.5 ? 'Excellent' : group.rating >= 4 ? 'Very Good' : group.rating >= 3.5 ? 'Good' : 'Rated'}
+                  </span>
+                </div>
+              </div>
             </div>
+          )}
         </div>
 
         {/* Footer Actions */}
-        <div className="p-4 sm:p-6 border-t border-gray-100 bg-white shrink-0 flex gap-3">
-             {group.url && (
-                <a 
-                    href={group.url} 
-                    target="_blank" 
-                    rel="noreferrer"
-                    className={`flex-1 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center transition-all ${
-                        group.isFallbackUrl 
-                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200 active:scale-[0.98]' 
-                        : 'bg-teal-600 text-white hover:bg-teal-700 shadow-lg shadow-teal-200 active:scale-[0.98]'
-                    }`}
-                >
-                    {group.isFallbackUrl ? <Search size={18} className="mr-2"/> : <Globe size={18} className="mr-2" />}
-                    {group.isFallbackUrl ? "Find on Google" : "Visit Website"}
-                </a>
+        <div className="p-4 sm:p-6 border-t border-gray-100 bg-white shrink-0">
+          <div className="flex gap-3 mb-3">
+            {group.url && (
+              <a
+                href={group.url}
+                target="_blank"
+                rel="noreferrer"
+                className={`flex-1 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center transition-all ${group.isFallbackUrl
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200 active:scale-[0.98]'
+                    : 'bg-teal-600 text-white hover:bg-teal-700 shadow-lg shadow-teal-200 active:scale-[0.98]'
+                  }`}
+              >
+                {group.isFallbackUrl ? <Search size={18} className="mr-2" /> : <Globe size={18} className="mr-2" />}
+                {group.isFallbackUrl ? "Find on Google" : "Visit Website"}
+              </a>
             )}
 
             {group.phoneNumber ? (
-                <a 
-                    href={`tel:${group.phoneNumber}`}
-                    className="flex-1 bg-white border border-gray-200 text-gray-700 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center hover:bg-gray-50 transition-colors active:scale-[0.98]"
-                >
-                    <Phone size={18} className="mr-2 text-gray-500" />
-                    Call
-                </a>
+              <a
+                href={`tel:${group.phoneNumber}`}
+                className="flex-1 bg-white border-2 border-teal-600 text-teal-700 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center hover:bg-teal-50 transition-colors active:scale-[0.98]"
+              >
+                <Phone size={18} className="mr-2" />
+                Call Now
+              </a>
             ) : (
-                <button 
-                    onClick={handleShare}
-                    className="flex-1 bg-white border border-gray-200 text-gray-700 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center hover:bg-gray-50 transition-colors active:scale-[0.98]"
-                >
-                    <Share2 size={18} className="mr-2 text-gray-500" />
-                    Share
-                </button>
+              <button
+                type="button"
+                onClick={handleShare}
+                className="flex-1 bg-white border border-gray-200 text-gray-700 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center hover:bg-gray-50 transition-colors active:scale-[0.98]"
+              >
+                <Share2 size={18} className="mr-2 text-gray-500" />
+                Share
+              </button>
             )}
+          </div>
+
+          {/* Directions button if we have an address */}
+          {group.address && (
+            <button
+              type="button"
+              onClick={handleGetDirections}
+              className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+            >
+              <Navigation size={16} className="mr-2" />
+              Get Directions
+            </button>
+          )}
         </div>
       </div>
     </div>

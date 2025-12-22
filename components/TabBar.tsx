@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppTab } from '../types';
-import { Search, Heart, User } from 'lucide-react';
+import { Search, Heart, Settings } from 'lucide-react';
 
 interface TabBarProps {
   activeTab: AppTab;
@@ -12,9 +12,10 @@ export const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange }) => {
     <div className="fixed bottom-0 left-0 right-0 glass-panel border-t border-gray-200 pb-5 pt-3 px-6 z-50">
       <div className="flex justify-between items-center max-w-md mx-auto">
         <button
+          type="button"
           onClick={() => onTabChange(AppTab.SEARCH)}
           className={`flex flex-col items-center space-y-1 ${
-            activeTab === AppTab.SEARCH ? 'text-blue-500' : 'text-gray-400'
+            activeTab === AppTab.SEARCH ? 'text-teal-600' : 'text-gray-400'
           }`}
         >
           <Search size={24} strokeWidth={activeTab === AppTab.SEARCH ? 2.5 : 2} />
@@ -22,9 +23,10 @@ export const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange }) => {
         </button>
 
         <button
+          type="button"
           onClick={() => onTabChange(AppTab.SAVED)}
           className={`flex flex-col items-center space-y-1 ${
-            activeTab === AppTab.SAVED ? 'text-blue-500' : 'text-gray-400'
+            activeTab === AppTab.SAVED ? 'text-teal-600' : 'text-gray-400'
           }`}
         >
           <Heart size={24} strokeWidth={activeTab === AppTab.SAVED ? 2.5 : 2} />
@@ -32,13 +34,14 @@ export const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange }) => {
         </button>
 
         <button
-          onClick={() => onTabChange(AppTab.PROFILE)}
+          type="button"
+          onClick={() => onTabChange(AppTab.SETTINGS)}
           className={`flex flex-col items-center space-y-1 ${
-            activeTab === AppTab.PROFILE ? 'text-blue-500' : 'text-gray-400'
+            activeTab === AppTab.SETTINGS ? 'text-teal-600' : 'text-gray-400'
           }`}
         >
-          <User size={24} strokeWidth={activeTab === AppTab.PROFILE ? 2.5 : 2} />
-          <span className="text-[10px] font-medium">Profile</span>
+          <Settings size={24} strokeWidth={activeTab === AppTab.SETTINGS ? 2.5 : 2} />
+          <span className="text-[10px] font-medium">Settings</span>
         </button>
       </div>
     </div>
