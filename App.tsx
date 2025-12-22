@@ -28,6 +28,61 @@ const useDebounce = <T,>(value: T, delay: number = 300) => {
   return debouncedValue;
 };
 
+// iOS Haptic Feedback Utility (iOS 18+ compatible)
+const triggerHapticFeedback = (type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' = 'light') => {
+  if ('vibrate' in navigator) {
+    // Haptic feedback pattern based on type
+    switch (type) {
+      case 'light':
+        navigator.vibrate(10);
+        break;
+      case 'medium':
+        navigator.vibrate(20);
+        break;
+      case 'heavy':
+        navigator.vibrate(30);
+        break;
+      case 'success':
+        navigator.vibrate([10, 20, 10]); // Pattern: short-gap-short
+        break;
+      case 'warning':
+        navigator.vibrate([50, 30, 50]); // Pattern: long-gap-long
+        break;
+      case 'error':
+        navigator.vibrate([30, 30, 30, 30]); // Multiple pulses
+        break;
+    }
+  }
+};
+
+// Safe Area Inset Hook for notch/dynamic island compatibility
+const useSafeAreaInsets = () => {
+  const [insets, setInsets] = useState({ top: 0, bottom: 0, left: 0, right: 0 });
+
+  useEffect(() => {
+    // Get safe area insets from CSS environment variables
+    const getCSSVariable = (name: string): number => {
+      const value = getComputedStyle(document.documentElement).getPropertyValue(name);
+      return parseInt(value, 10) || 0;
+    };
+
+    const updateInsets = () => {
+      setInsets({
+        top: getCSSVariable('--safe-area-inset-top'),
+        bottom: getCSSVariable('--safe-area-inset-bottom'),
+        left: getCSSVariable('--safe-area-inset-left'),
+        right: getCSSVariable('--safe-area-inset-right'),
+      });
+    };
+
+    updateInsets();
+    window.addEventListener('orientationchange', updateInsets);
+    return () => window.removeEventListener('orientationchange', updateInsets);
+  }, []);
+
+  return insets;
+};
+
 const SEARCH_STATE_KEY = 'supportGroupFinder_searchState';
 const RESULTS_PER_PAGE_KEY = 'supportGroupFinder_resultsPerPage';
 const DEFAULT_RESULTS_PER_PAGE = 10;
@@ -217,6 +272,9 @@ const App: React.FC = () => {
   const handleSearch = async () => {
     if (!searchState.query || !searchState.location) return;
 
+    // Haptic feedback on search start
+    triggerHapticFeedback('medium');
+
     // Save to recent searches
     addSearch(searchState.query, searchState.location);
 
@@ -301,6 +359,9 @@ const App: React.FC = () => {
         results: groups,
         currentPage: 1
       }));
+
+      // Haptic feedback on successful search
+      triggerHapticFeedback(groups.length > 0 ? 'success' : 'warning');
     } catch (error) {
       // Determine error type and provide helpful message
       let errorMessage = "We couldn't find any groups right now. Please try a different location or topic.";
@@ -321,6 +382,9 @@ const App: React.FC = () => {
         isLoading: false,
         error: errorMessage
       }));
+
+      // Haptic feedback on error
+      triggerHapticFeedback('error');
     }
   };
 
