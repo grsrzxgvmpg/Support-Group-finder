@@ -5,6 +5,8 @@ import { GroupCard } from './components/GroupCard';
 import { GroupDetailModal } from './components/GroupDetailModal';
 import { AppTab, SearchState, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter, SortOption, SupportGroup, UserCoordinates } from './types';
 import { searchSupportGroups } from './services/searchService';
+import { isNativePlatform, getCurrentPosition, triggerHaptic, LocationError } from './services/platform';
+import { App as CapacitorApp } from '@capacitor/app';
 import { useSavedGroups } from './hooks/useSavedGroups';
 import { useRecentSearches } from './hooks/useRecentSearches';
 import { AlertCircle, Heart, ShieldCheck, ExternalLink, Trash2, Clock, X, ChevronLeft, ChevronRight, Navigation, Phone } from 'lucide-react';
@@ -29,20 +31,6 @@ const useDebounce = <T,>(value: T, delay: number = 300) => {
   }, [value, delay]);
 
   return debouncedValue;
-};
-
-// Haptic feedback utility (no-op on platforms without vibration support)
-const triggerHapticFeedback = (type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' = 'light') => {
-  if (!('vibrate' in navigator)) return;
-  const patterns: Record<string, number | number[]> = {
-    light: 10,
-    medium: 20,
-    heavy: 30,
-    success: [10, 20, 10],
-    warning: [50, 30, 50],
-    error: [30, 30, 30, 30]
-  };
-  navigator.vibrate(patterns[type]);
 };
 
 const SEARCH_STATE_KEY = 'supportGroupFinder_searchState';
@@ -168,13 +156,36 @@ const App: React.FC = () => {
   const shouldAutoSearch = useRef(false);
   const prevFilterKey = useRef<string | null>(null);
 
+  // Latest UI state for the native back-button handler (avoids stale closures)
+  const selectedGroupRef = useRef(selectedGroup);
+  selectedGroupRef.current = selectedGroup;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+
+  // Android hardware back button: close modal -> back to Search tab -> exit
+  useEffect(() => {
+    if (!isNativePlatform) return;
+    const listener = CapacitorApp.addListener('backButton', () => {
+      if (selectedGroupRef.current) {
+        setSelectedGroup(null);
+      } else if (activeTabRef.current !== AppTab.SEARCH) {
+        setActiveTab(AppTab.SEARCH);
+      } else {
+        CapacitorApp.exitApp();
+      }
+    });
+    return () => {
+      listener.then(handle => handle.remove()).catch(() => { /* already removed */ });
+    };
+  }, []);
+
   const handleSearch = async () => {
     const query = searchState.query.trim();
     const location = searchState.location.trim();
     if (!query || !location) return;
 
     // Haptic feedback on search start
-    triggerHapticFeedback('medium');
+    triggerHaptic('medium');
 
     // Save to recent searches
     addSearch(query, location);
@@ -262,7 +273,7 @@ const App: React.FC = () => {
       }));
 
       // Haptic feedback on successful search
-      triggerHapticFeedback(groups.length > 0 ? 'success' : 'warning');
+      triggerHaptic(groups.length > 0 ? 'success' : 'warning');
     } catch (error) {
       // Determine error type and provide helpful message
       let errorMessage = "We couldn't find any groups right now. Please try a different location or topic.";
@@ -282,7 +293,7 @@ const App: React.FC = () => {
       }));
 
       // Haptic feedback on error
-      triggerHapticFeedback('error');
+      triggerHaptic('error');
     }
   };
 
@@ -334,60 +345,44 @@ const App: React.FC = () => {
     }
   }, [debouncedSearchState]);
 
-  const handleLocateMe = () => {
-    if (!navigator.geolocation) {
-      setSearchState(prev => ({ ...prev, error: "Location services aren't supported on this device. Please enter your location manually." }));
+  const handleLocateMe = async () => {
+    setSearchState(prev => ({ ...prev, isLocating: true, error: null }));
+
+    let coords: UserCoordinates;
+    try {
+      coords = await getCurrentPosition();
+    } catch (error) {
+      const code = error instanceof LocationError ? error.code : 'unavailable';
+      const message =
+        code === 'unsupported' ? "Location services aren't supported on this device. Please enter your location manually."
+        : code === 'denied' ? "Location access was denied. Please enter your location manually or enable location permissions."
+        : "Unable to retrieve your location. Please enter it manually.";
+      setSearchState(prev => ({ ...prev, isLocating: false, error: message }));
       return;
     }
 
-    setSearchState(prev => ({ ...prev, isLocating: true, error: null }));
+    // Try to get a readable location name via reverse geocoding
+    let locationName = 'Current Location';
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}&zoom=10`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county;
+        const state = data.address?.state;
+        if (city && state) locationName = `${city}, ${state}`;
+      }
+    } catch {
+      // Reverse geocoding is best-effort; keep the generic label
+    }
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const coords: UserCoordinates = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude
-        };
-
-        // Try to get a readable location name via reverse geocoding
-        try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}&zoom=10`
-          );
-          if (!response.ok) throw new Error('Reverse geocoding failed');
-          const data = await response.json();
-          const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county;
-          const state = data.address?.state;
-          const locationName = city && state ? `${city}, ${state}` : "Current Location";
-
-          setSearchState(prev => ({
-            ...prev,
-            location: locationName,
-            userCoordinates: coords,
-            isLocating: false
-          }));
-        } catch {
-          // Fallback if reverse geocoding fails
-          setSearchState(prev => ({
-            ...prev,
-            location: "Current Location",
-            userCoordinates: coords,
-            isLocating: false
-          }));
-        }
-      },
-      (error) => {
-        const message = error.code === error.PERMISSION_DENIED
-          ? "Location access was denied. Please enter your location manually or enable location permissions."
-          : "Unable to retrieve your location. Please enter it manually.";
-        setSearchState(prev => ({
-            ...prev,
-            isLocating: false,
-            error: message
-        }));
-      },
-      { timeout: 10000, maximumAge: 5 * 60 * 1000 }
-    );
+    setSearchState(prev => ({
+      ...prev,
+      location: locationName,
+      userCoordinates: coords,
+      isLocating: false
+    }));
   };
 
   // Typing a location manually invalidates previously captured GPS

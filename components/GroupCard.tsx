@@ -2,6 +2,7 @@ import React from 'react';
 import { SupportGroup } from '../types';
 import { MapPin, Globe, Search, Phone, Share2, Building2, Clock, Heart, Navigation } from 'lucide-react';
 import { useToast } from './Toast';
+import { shareContent } from '../services/platform';
 
 interface GroupCardProps {
   group: SupportGroup;
@@ -25,23 +26,11 @@ const GroupCardComponent: React.FC<GroupCardProps> = ({ group, onClick, isSaved 
       group.url
     ].filter(Boolean).join('\n');
 
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: group.name,
-          text: shareText,
-          url: group.url
-        });
-      } catch {
-        // User cancelled the share sheet - nothing to do
-      }
-    } else {
-      try {
-        await navigator.clipboard.writeText(shareText);
-        showToast('Group info copied to clipboard!', 'success');
-      } catch {
-        showToast('Could not copy to clipboard', 'error');
-      }
+    const outcome = await shareContent({ title: group.name, text: shareText, url: group.url });
+    if (outcome === 'copied') {
+      showToast('Group info copied to clipboard!', 'success');
+    } else if (outcome === 'failed') {
+      showToast('Could not share group info', 'error');
     }
   };
 

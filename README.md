@@ -37,5 +37,15 @@ npm run build          # production build (dist/)
 
 Deploys as-is to Vercel. Set `SERPER_API_KEY` in Project Settings → Environment Variables.
 
+## Android & iOS
+
+Native apps are built with Capacitor from the same codebase — see **[MOBILE.md](MOBILE.md)**:
+
+```bash
+VITE_API_BASE_URL=https://your-app.vercel.app   # in .env — native shells need an absolute API URL
+npm run android   # build + sync + open Android Studio
+npm run ios       # build + sync + open Xcode (macOS)
+```
+
 ## Repository
 [https://github.com/grsrzxgvmpg/Support-Group-finder](https://github.com/grsrzxgvmpg/Support-Group-finder)

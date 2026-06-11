@@ -54,6 +54,9 @@ const svgIcon = `
 // Generate icons at different sizes
 const sizes = [192, 512];
 
+// Source assets for @capacitor/assets (native Android/iOS icons & splash screens)
+const capacitorAssetsDir = path.join(process.cwd(), 'assets');
+
 async function generateIcons() {
   try {
     console.log('Generating PWA icons...');
@@ -72,8 +75,32 @@ async function generateIcons() {
       console.log(`✓ Created ${filename}`);
     }
 
+    console.log('\nGenerating Capacitor source assets...');
+    if (!fs.existsSync(capacitorAssetsDir)) {
+      fs.mkdirSync(capacitorAssetsDir, { recursive: true });
+    }
+
+    // 1024x1024 app icon
+    await sharp(Buffer.from(svgIcon))
+      .resize(1024, 1024)
+      .png()
+      .toFile(path.join(capacitorAssetsDir, 'icon.png'));
+    console.log('✓ Created assets/icon.png (1024x1024)');
+
+    // 2732x2732 splash screens: centered logo on solid background
+    const logo = await sharp(Buffer.from(svgIcon)).resize(1024, 1024).png().toBuffer();
+    for (const [name, background] of [['splash.png', '#0D9488'], ['splash-dark.png', '#042F2E']]) {
+      await sharp({
+        create: { width: 2732, height: 2732, channels: 4, background }
+      })
+        .composite([{ input: logo, gravity: 'center' }])
+        .png()
+        .toFile(path.join(capacitorAssetsDir, name));
+      console.log(`✓ Created assets/${name} (2732x2732)`);
+    }
+
     console.log('\n✓ All icons generated successfully!');
-    console.log(`Icons created in: ${iconsDir}`);
+    console.log('Run "npx @capacitor/assets generate" to produce native icons/splash screens.');
 
   } catch (error) {
     console.error('Error generating icons:', error);

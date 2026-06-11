@@ -17,7 +17,9 @@ export default defineConfig(({ mode }) => {
         react(),
         VitePWA({
           registerType: 'autoUpdate',
-          injectRegister: 'auto',
+          // Registration happens in index.tsx so native (Capacitor) builds
+          // can skip the service worker entirely
+          injectRegister: false,
           includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
           manifest: {
             name: 'Support Group Finder',

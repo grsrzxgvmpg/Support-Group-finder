@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { SupportGroup } from '../types';
 import { X, MapPin, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag } from 'lucide-react';
 import { useToast } from './Toast';
+import { shareContent } from '../services/platform';
 
 interface GroupDetailModalProps {
   group: SupportGroup;
@@ -58,18 +59,11 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
       group.url
     ].filter(Boolean).join('\n');
 
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: group.name,
-          text: shareText,
-          url: group.url
-        });
-      } catch {
-        // User cancelled the share sheet - nothing to do
-      }
-    } else {
-      copyToClipboard(shareText, 'Group info copied to clipboard!');
+    const outcome = await shareContent({ title: group.name, text: shareText, url: group.url });
+    if (outcome === 'copied') {
+      showToast('Group info copied to clipboard!', 'success');
+    } else if (outcome === 'failed') {
+      showToast('Could not share group info', 'error');
     }
   };
 

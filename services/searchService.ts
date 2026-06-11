@@ -38,8 +38,12 @@ function calculateCompletenessScore(group: Partial<SupportGroup>): number {
   return Math.round((score / maxScore) * 100);
 }
 
-// API endpoint - uses serverless function in production
-const API_URL = '/api/search';
+// API endpoint - a same-origin serverless function on the web. Native
+// (Capacitor) builds have no same-origin server, so VITE_API_BASE_URL must
+// point at the deployed backend (e.g. https://your-app.vercel.app) at build
+// time. Without it, native builds fall back to the curated resources below.
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const API_URL = `${API_BASE}/api/search`;
 
 // Curated fallback resources
 const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
