@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { TabBar } from './components/TabBar';
 import { SearchBar } from './components/SearchBar';
 import { GroupCard } from './components/GroupCard';
 import { GroupDetailModal } from './components/GroupDetailModal';
 import { AppTab, SearchState, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter, SortOption, SupportGroup, UserCoordinates } from './types';
-import { searchSupportGroups } from './services/geminiService';
+import { searchSupportGroups } from './services/searchService';
 import { useSavedGroups } from './hooks/useSavedGroups';
 import { useRecentSearches } from './hooks/useRecentSearches';
-import { AlertCircle, Heart, ShieldCheck, ExternalLink, Trash2, Clock, X, ChevronLeft, ChevronRight, Navigation } from 'lucide-react';
+import { AlertCircle, Heart, ShieldCheck, ExternalLink, Trash2, Clock, X, ChevronLeft, ChevronRight, Navigation, Phone } from 'lucide-react';
+
+const APP_VERSION = '1.3.0';
+const GITHUB_URL = 'https://github.com/grsrzxgvmpg/support-group-finder';
 
 const SUGGESTED_TOPICS = [
   "Anxiety", "Depression", "Grief", "Addiction", "LGBTQ+", "PTSD", "Eating Disorders", "Family Support"
@@ -28,65 +31,32 @@ const useDebounce = <T,>(value: T, delay: number = 300) => {
   return debouncedValue;
 };
 
-// iOS Haptic Feedback Utility (iOS 18+ compatible)
+// Haptic feedback utility (no-op on platforms without vibration support)
 const triggerHapticFeedback = (type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' = 'light') => {
-  if ('vibrate' in navigator) {
-    // Haptic feedback pattern based on type
-    switch (type) {
-      case 'light':
-        navigator.vibrate(10);
-        break;
-      case 'medium':
-        navigator.vibrate(20);
-        break;
-      case 'heavy':
-        navigator.vibrate(30);
-        break;
-      case 'success':
-        navigator.vibrate([10, 20, 10]); // Pattern: short-gap-short
-        break;
-      case 'warning':
-        navigator.vibrate([50, 30, 50]); // Pattern: long-gap-long
-        break;
-      case 'error':
-        navigator.vibrate([30, 30, 30, 30]); // Multiple pulses
-        break;
-    }
-  }
-};
-
-// Safe Area Inset Hook for notch/dynamic island compatibility
-const useSafeAreaInsets = () => {
-  const [insets, setInsets] = useState({ top: 0, bottom: 0, left: 0, right: 0 });
-
-  useEffect(() => {
-    // Get safe area insets from CSS environment variables
-    const getCSSVariable = (name: string): number => {
-      const value = getComputedStyle(document.documentElement).getPropertyValue(name);
-      return parseInt(value, 10) || 0;
-    };
-
-    const updateInsets = () => {
-      setInsets({
-        top: getCSSVariable('--safe-area-inset-top'),
-        bottom: getCSSVariable('--safe-area-inset-bottom'),
-        left: getCSSVariable('--safe-area-inset-left'),
-        right: getCSSVariable('--safe-area-inset-right'),
-      });
-    };
-
-    updateInsets();
-    window.addEventListener('orientationchange', updateInsets);
-    return () => window.removeEventListener('orientationchange', updateInsets);
-  }, []);
-
-  return insets;
+  if (!('vibrate' in navigator)) return;
+  const patterns: Record<string, number | number[]> = {
+    light: 10,
+    medium: 20,
+    heavy: 30,
+    success: [10, 20, 10],
+    warning: [50, 30, 50],
+    error: [30, 30, 30, 30]
+  };
+  navigator.vibrate(patterns[type]);
 };
 
 const SEARCH_STATE_KEY = 'supportGroupFinder_searchState';
 const RESULTS_PER_PAGE_KEY = 'supportGroupFinder_resultsPerPage';
 const DEFAULT_RESULTS_PER_PAGE = 10;
 const RESULTS_PER_PAGE_OPTIONS = [5, 10, 15, 20];
+
+const DEFAULT_FILTERS = {
+  meetingType: MeetingType.ALL,
+  sessionType: SessionType.ANY,
+  leadershipType: LeadershipType.ANY,
+  ageGroup: AgeGroup.ALL,
+  distance: DistanceFilter.ANY
+};
 
 // Calculate distance between two coordinates using Haversine formula
 const calculateDistanceMiles = (
@@ -129,31 +99,21 @@ const getSavedResultsPerPage = (): number => {
   return DEFAULT_RESULTS_PER_PAGE;
 };
 
+// Initial tab from PWA shortcut URL (/?tab=saved) if present
+const getInitialTab = (): AppTab => {
+  try {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab === 'saved') return AppTab.SAVED;
+    if (tab === 'settings') return AppTab.SETTINGS;
+  } catch {
+    // Ignore malformed URLs
+  }
+  return AppTab.SEARCH;
+};
+
 // Initialize state from localStorage or defaults
 const initializeSearchState = (): SearchState => {
-  try {
-    const saved = localStorage.getItem(SEARCH_STATE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return {
-        query: parsed.query || '',
-        location: parsed.location || '',
-        userCoordinates: parsed.userCoordinates || null,
-        isLocating: false,
-        isLoading: false,
-        results: parsed.results || [],
-        error: null,
-        filters: parsed.filters || { meetingType: MeetingType.ALL, sessionType: SessionType.ANY, leadershipType: LeadershipType.ANY, ageGroup: AgeGroup.ALL, distance: DistanceFilter.ANY },
-        sortBy: parsed.sortBy || SortOption.RELEVANCE,
-        currentPage: 1,
-        resultsPerPage: getSavedResultsPerPage()
-      };
-    }
-  } catch (e) {
-    console.warn('Failed to load saved search state:', e);
-  }
-
-  return {
+  const defaults: SearchState = {
     query: '',
     location: '',
     userCoordinates: null,
@@ -161,11 +121,31 @@ const initializeSearchState = (): SearchState => {
     isLoading: false,
     results: [],
     error: null,
-    filters: { meetingType: MeetingType.ALL, sessionType: SessionType.ANY, leadershipType: LeadershipType.ANY, ageGroup: AgeGroup.ALL, distance: DistanceFilter.ANY },
+    filters: { ...DEFAULT_FILTERS },
     sortBy: SortOption.RELEVANCE,
     currentPage: 1,
     resultsPerPage: getSavedResultsPerPage()
   };
+
+  try {
+    const saved = localStorage.getItem(SEARCH_STATE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        ...defaults,
+        query: parsed.query || '',
+        location: parsed.location || '',
+        userCoordinates: parsed.userCoordinates || null,
+        results: Array.isArray(parsed.results) ? parsed.results : [],
+        filters: { ...DEFAULT_FILTERS, ...parsed.filters },
+        sortBy: parsed.sortBy || SortOption.RELEVANCE
+      };
+    }
+  } catch (e) {
+    console.warn('Failed to load saved search state:', e);
+  }
+
+  return defaults;
 };
 
 // Track distance filter info for user feedback
@@ -176,124 +156,36 @@ interface DistanceFilterInfo {
 }
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<AppTab>(AppTab.SEARCH);
+  const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab);
   const [selectedGroup, setSelectedGroup] = useState<SupportGroup | null>(null);
   const { savedGroups, isGroupSaved, toggleSaveGroup } = useSavedGroups();
   const { recentSearches, addSearch, removeSearch } = useRecentSearches();
   const [distanceFilterInfo, setDistanceFilterInfo] = useState<DistanceFilterInfo | null>(null);
-  const [updateAvailable, setUpdateAvailable] = useState(false);
 
-  const [searchState, setSearchState] = useState<SearchState>(initializeSearchState());
-  const debouncedFilters = useDebounce(searchState.filters, 300);
-  const debouncedSort = useDebounce(searchState.sortBy, 300);
-  const hasExistingResults = useRef(searchState.results.length > 0);
+  const [searchState, setSearchState] = useState<SearchState>(initializeSearchState);
+  const debouncedFilters = useDebounce(searchState.filters, 400);
+  const debouncedSort = useDebounce(searchState.sortBy, 400);
   const shouldAutoSearch = useRef(false);
-
-  // Auto-search when filters or sort change (if we have existing results and search terms)
-  useEffect(() => {
-    hasExistingResults.current = searchState.results.length > 0;
-
-    // Only auto-search if user has results and hasn't changed their search terms
-    if (hasExistingResults.current && searchState.query && searchState.location) {
-      const timer = setTimeout(() => {
-        handleSearch();
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [debouncedFilters, debouncedSort]);
-
-  // Auto-search when recent search is clicked
-  useEffect(() => {
-    if (shouldAutoSearch.current && searchState.query && searchState.location) {
-      shouldAutoSearch.current = false;
-      handleSearch();
-    }
-  }, [searchState.query, searchState.location]);
-
-  // Persist search state to localStorage whenever it changes
-  useEffect(() => {
-    try {
-      const stateToSave = {
-        query: searchState.query,
-        location: searchState.location,
-        userCoordinates: searchState.userCoordinates,
-        results: searchState.results,
-        filters: searchState.filters,
-        sortBy: searchState.sortBy
-      };
-      localStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(stateToSave));
-    } catch (e) {
-      console.warn('Failed to save search state:', e);
-    }
-  }, [searchState.query, searchState.location, searchState.userCoordinates, searchState.results, searchState.filters, searchState.sortBy]);
-
-  const handleLocateMe = () => {
-    if (!navigator.geolocation) {
-      setSearchState(prev => ({ ...prev, error: "Geolocation not supported" }));
-      return;
-    }
-
-    setSearchState(prev => ({ ...prev, isLocating: true }));
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const coords: UserCoordinates = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude
-        };
-
-        // Try to get a readable location name via reverse geocoding
-        try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}`
-          );
-          const data = await response.json();
-          const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county;
-          const state = data.address?.state;
-          const locationName = city && state ? `${city}, ${state}` : "Current Location";
-
-          setSearchState(prev => ({
-            ...prev,
-            location: locationName,
-            userCoordinates: coords,
-            isLocating: false
-          }));
-        } catch {
-          // Fallback if reverse geocoding fails
-          setSearchState(prev => ({
-            ...prev,
-            location: "Current Location",
-            userCoordinates: coords,
-            isLocating: false
-          }));
-        }
-      },
-      (error) => {
-        setSearchState(prev => ({
-            ...prev,
-            isLocating: false,
-            error: "Unable to retrieve location. Please enter manually."
-        }));
-      }
-    );
-  };
+  const prevFilterKey = useRef<string | null>(null);
 
   const handleSearch = async () => {
-    if (!searchState.query || !searchState.location) return;
+    const query = searchState.query.trim();
+    const location = searchState.location.trim();
+    if (!query || !location) return;
 
     // Haptic feedback on search start
     triggerHapticFeedback('medium');
 
     // Save to recent searches
-    addSearch(searchState.query, searchState.location);
+    addSearch(query, location);
 
     setSearchState(prev => ({ ...prev, isLoading: true, error: null, results: [], currentPage: 1 }));
     setDistanceFilterInfo(null);
 
     try {
       let groups = await searchSupportGroups(
-          searchState.query,
-          searchState.location,
+          query,
+          location,
           searchState.filters,
           searchState.sortBy
       );
@@ -375,15 +267,12 @@ const App: React.FC = () => {
       // Determine error type and provide helpful message
       let errorMessage = "We couldn't find any groups right now. Please try a different location or topic.";
 
-      // Check if offline
       if (!navigator.onLine) {
-        errorMessage = "You're offline. Some search features may not work. Try searching again when you're back online.";
+        errorMessage = "You're offline. Try searching again when you're back online.";
       } else if (error instanceof TypeError && error.message.includes('fetch')) {
-        // Network error
         errorMessage = "Network error. Check your connection and try again.";
       } else if (error instanceof Error && error.message.includes('API')) {
-        // API error
-        errorMessage = "Search service temporarily unavailable. Showing fallback resources instead.";
+        errorMessage = "Search service temporarily unavailable. Please try again in a moment.";
       }
 
       setSearchState(prev => ({
@@ -396,6 +285,124 @@ const App: React.FC = () => {
       triggerHapticFeedback('error');
     }
   };
+
+  // Keep a ref to the latest handleSearch so effects never call a stale closure
+  const handleSearchRef = useRef(handleSearch);
+  handleSearchRef.current = handleSearch;
+
+  // Re-run the search when filters or sort change (only after the user
+  // already has results — and never on the initial mount, which would
+  // fire a wasted API call every time the app opens). Comparing serialized
+  // values instead of using a first-run flag keeps this correct under
+  // StrictMode's double-mounted effects.
+  useEffect(() => {
+    const key = JSON.stringify([debouncedFilters, debouncedSort]);
+    if (prevFilterKey.current === key) return;
+    const isFirstRun = prevFilterKey.current === null;
+    prevFilterKey.current = key;
+    if (isFirstRun) return;
+
+    if (searchState.results.length > 0 && searchState.query.trim() && searchState.location.trim()) {
+      handleSearchRef.current();
+    }
+  }, [debouncedFilters, debouncedSort]);
+
+  // Auto-search when a recent search is clicked
+  useEffect(() => {
+    if (shouldAutoSearch.current && searchState.query && searchState.location) {
+      shouldAutoSearch.current = false;
+      handleSearchRef.current();
+    }
+  }, [searchState.query, searchState.location]);
+
+  // Persist search state to localStorage (debounced so typing doesn't
+  // serialize the whole results array on every keystroke)
+  const debouncedSearchState = useDebounce(searchState, 500);
+  useEffect(() => {
+    try {
+      const stateToSave = {
+        query: debouncedSearchState.query,
+        location: debouncedSearchState.location,
+        userCoordinates: debouncedSearchState.userCoordinates,
+        results: debouncedSearchState.results,
+        filters: debouncedSearchState.filters,
+        sortBy: debouncedSearchState.sortBy
+      };
+      localStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(stateToSave));
+    } catch (e) {
+      console.warn('Failed to save search state:', e);
+    }
+  }, [debouncedSearchState]);
+
+  const handleLocateMe = () => {
+    if (!navigator.geolocation) {
+      setSearchState(prev => ({ ...prev, error: "Location services aren't supported on this device. Please enter your location manually." }));
+      return;
+    }
+
+    setSearchState(prev => ({ ...prev, isLocating: true, error: null }));
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const coords: UserCoordinates = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        };
+
+        // Try to get a readable location name via reverse geocoding
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}&zoom=10`
+          );
+          if (!response.ok) throw new Error('Reverse geocoding failed');
+          const data = await response.json();
+          const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county;
+          const state = data.address?.state;
+          const locationName = city && state ? `${city}, ${state}` : "Current Location";
+
+          setSearchState(prev => ({
+            ...prev,
+            location: locationName,
+            userCoordinates: coords,
+            isLocating: false
+          }));
+        } catch {
+          // Fallback if reverse geocoding fails
+          setSearchState(prev => ({
+            ...prev,
+            location: "Current Location",
+            userCoordinates: coords,
+            isLocating: false
+          }));
+        }
+      },
+      (error) => {
+        const message = error.code === error.PERMISSION_DENIED
+          ? "Location access was denied. Please enter your location manually or enable location permissions."
+          : "Unable to retrieve your location. Please enter it manually.";
+        setSearchState(prev => ({
+            ...prev,
+            isLocating: false,
+            error: message
+        }));
+      },
+      { timeout: 10000, maximumAge: 5 * 60 * 1000 }
+    );
+  };
+
+  // Typing a location manually invalidates previously captured GPS
+  // coordinates - otherwise distances would be computed from the old spot
+  const handleLocationChange = useCallback((val: string) => {
+    setSearchState(prev => ({
+      ...prev,
+      location: val,
+      userCoordinates: val === prev.location ? prev.userCoordinates : null
+    }));
+  }, []);
+
+  const handleTopicChange = useCallback((val: string) => {
+    setSearchState(prev => ({ ...prev, query: val }));
+  }, []);
 
   // Handle online/offline status changes
   useEffect(() => {
@@ -421,35 +428,22 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Listen for service worker updates (PWA)
+  // Check for service worker updates when the app returns to the foreground
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const checkForUpdates = () => {
       if (!document.hidden && 'serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(registrations => {
-          registrations.forEach(registration => {
-            registration.update();
-          });
-        });
+          registrations.forEach(registration => registration.update());
+        }).catch(() => { /* SW not available */ });
       }
     };
 
-    // Check for updates when app comes to foreground
-    const handleFocus = () => {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(registrations => {
-          registrations.forEach(registration => {
-            registration.update();
-          });
-        });
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', checkForUpdates);
+    window.addEventListener('focus', checkForUpdates);
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', checkForUpdates);
+      window.removeEventListener('focus', checkForUpdates);
     };
   }, []);
 
@@ -462,10 +456,32 @@ const App: React.FC = () => {
     setSearchState(prev => ({ ...prev, query: topic }));
   };
 
+  const goToPage = (page: number) => {
+    setSearchState(prev => ({ ...prev, currentPage: page }));
+    // Bring the top of the results back into view (header is sticky, so the
+    // results list starts right below it at scroll position 0)
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const renderContent = () => {
     if (searchState.results.length === 0 && !searchState.isLoading) {
       return (
-        <div className="mt-8 animate-in fade-in duration-500">
+        <div className="mt-6 animate-in fade-in duration-500">
+          {/* Crisis support banner */}
+          <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3">
+            <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+              <Phone size={16} className="text-rose-600" aria-hidden="true" />
+            </div>
+            <div className="text-sm">
+              <p className="font-bold text-rose-900">In crisis or need to talk right now?</p>
+              <p className="text-rose-800/80 mt-0.5">
+                Call or text{' '}
+                <a href="tel:988" className="font-bold text-rose-700 underline underline-offset-2">988</a>
+                {' '}— the Suicide &amp; Crisis Lifeline. Free, confidential, 24/7.
+              </p>
+            </div>
+          </div>
+
           {/* Recent Searches */}
           {recentSearches.length > 0 && (
             <div className="mb-6">
@@ -474,15 +490,15 @@ const App: React.FC = () => {
                 {recentSearches.map((search) => (
                   <div
                     key={search.timestamp}
-                    className="flex items-center justify-between bg-white rounded-xl px-4 py-3 border border-gray-100 shadow-sm hover:border-teal-200 transition-colors group"
+                    className="flex items-center justify-between bg-white rounded-xl px-4 py-3 border border-gray-100 shadow-sm hover:border-teal-200 transition-colors"
                   >
                     <button
                       type="button"
                       onClick={() => handleRecentSearchClick(search.query, search.location)}
-                      className="flex items-center gap-3 flex-1 text-left"
+                      className="flex items-center gap-3 flex-1 text-left min-w-0"
                     >
-                      <Clock size={16} className="text-gray-400" />
-                      <div>
+                      <Clock size={16} className="text-gray-400 shrink-0" aria-hidden="true" />
+                      <div className="truncate">
                         <span className="text-sm font-semibold text-gray-800">{search.query}</span>
                         <span className="text-gray-400 mx-2">in</span>
                         <span className="text-sm text-gray-600">{search.location}</span>
@@ -491,8 +507,8 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => removeSearch(search.timestamp)}
-                      className="p-1 text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                      aria-label="Remove search"
+                      className="p-1.5 text-gray-300 hover:text-gray-500 transition-colors shrink-0"
+                      aria-label={`Remove search for ${search.query} in ${search.location}`}
                     >
                       <X size={16} />
                     </button>
@@ -509,6 +525,7 @@ const App: React.FC = () => {
                 type="button"
                 key={topic}
                 onClick={() => handleTopicClick(topic)}
+                aria-pressed={searchState.query === topic}
                 className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
                   searchState.query === topic
                     ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
@@ -522,7 +539,7 @@ const App: React.FC = () => {
 
           <div className="mt-10 p-5 bg-gradient-to-br from-teal-50 to-white rounded-2xl border border-teal-100/50">
             <div className="flex items-center gap-2 mb-2">
-                <ShieldCheck className="text-teal-600" size={20} />
+                <ShieldCheck className="text-teal-600" size={20} aria-hidden="true" />
                 <h3 className="text-teal-900 font-bold text-base">Verified Resources</h3>
             </div>
             <p className="text-teal-800/70 text-sm leading-relaxed">
@@ -535,7 +552,7 @@ const App: React.FC = () => {
 
     if (searchState.isLoading) {
       return (
-        <div className="mt-8 space-y-4 px-1">
+        <div className="mt-8 space-y-4 px-1" role="status" aria-label="Loading search results">
            {[1, 2, 3].map((i) => (
               <div key={i} className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
                   <div className="h-4 bg-gray-100 rounded w-3/4 mb-4 animate-pulse"></div>
@@ -566,11 +583,18 @@ const App: React.FC = () => {
       searchState.results.every(r => r.sourceName === 'Google' || r.isFallbackUrl ||
         ['NAMI', 'DBSA', 'Psychology Today', '7 Cups', 'SAMHSA', 'AA', 'MHA'].includes(r.sourceName || ''));
 
+    const totalResults = searchState.results.length;
+    const totalPages = Math.ceil(totalResults / searchState.resultsPerPage);
+    const currentPage = Math.min(searchState.currentPage, totalPages);
+    const startIndex = (currentPage - 1) * searchState.resultsPerPage;
+    const endIndex = Math.min(startIndex + searchState.resultsPerPage, totalResults);
+    const paginatedResults = searchState.results.slice(startIndex, endIndex);
+
     return (
-      <div className="mt-6 pb-24 animate-in slide-in-from-bottom-2 duration-500">
+      <div className="mt-6 pb-28 animate-in slide-in-from-bottom-2 duration-500">
         <div className="flex justify-between items-baseline mb-4 px-1">
             <h2 className="text-gray-800 font-bold text-lg" role="status" aria-live="polite" aria-atomic="true">
-            {searchState.results.length} {searchState.results.length === 1 ? 'Result' : 'Groups'} Found
+            {totalResults} {totalResults === 1 ? 'Group' : 'Groups'} Found
             </h2>
             <span className="text-xs font-medium text-gray-400">
                 Sorted by {searchState.sortBy}
@@ -580,16 +604,16 @@ const App: React.FC = () => {
         {/* Distance filter notice - explains why result count varies */}
         {distanceFilterInfo && distanceFilterInfo.filtered > 0 && (
           <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-start gap-2">
-            <Navigation size={16} className="text-blue-600 shrink-0 mt-0.5" />
+            <Navigation size={16} className="text-blue-600 shrink-0 mt-0.5" aria-hidden="true" />
             <p className="text-blue-800 text-sm">
-              Showing {searchState.results.length} groups {distanceFilterInfo.filterLabel.toLowerCase()}.
+              Showing {totalResults} groups {distanceFilterInfo.filterLabel.toLowerCase()}.
               <span className="text-blue-600"> {distanceFilterInfo.filtered} more groups found outside this range.</span>
             </p>
           </div>
         )}
 
         {/* Filter notice when results are limited */}
-        {hasActiveFilters && onlyFallbackResults && searchState.results.length <= 3 && (
+        {hasActiveFilters && onlyFallbackResults && totalResults <= 3 && (
           <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
             <p className="text-amber-800 text-sm">
               <strong>Limited results:</strong> Your filters may be too specific for this area. Try broadening your search criteria for more options.
@@ -598,38 +622,38 @@ const App: React.FC = () => {
         )}
 
         {/* Result Quality Metrics Summary */}
-        {searchState.results.length > 0 && (() => {
+        {totalResults > 0 && (() => {
           const trustedOrgs = ['NAMI', 'DBSA', 'AA', 'Alcoholics Anonymous', 'Psychology Today', '7 Cups', 'SAMHSA', 'MHA', 'Mental Health America'];
-          const withVerified = searchState.results.filter(r => trustedOrgs.some(org => r.name?.includes(org) || r.sourceName?.includes(org)));
-          const withRatings = searchState.results.filter(r => r.rating);
-          const withPhone = searchState.results.filter(r => r.phoneNumber);
-          const withAddress = searchState.results.filter(r => r.address);
+          const withVerified = searchState.results.filter(r => trustedOrgs.some(org => r.name?.includes(org) || r.sourceName?.includes(org))).length;
+          const withRatings = searchState.results.filter(r => r.rating).length;
+          const withPhone = searchState.results.filter(r => r.phoneNumber).length;
+          const withAddress = searchState.results.filter(r => r.address).length;
 
           return (
             <div className="mb-4 p-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl">
               <div className="flex flex-wrap gap-3 text-xs">
-                {withVerified.length > 0 && (
+                {withVerified > 0 && (
                   <div className="flex items-center gap-1">
-                    <span className="text-green-700 font-bold">✓</span>
-                    <span className="text-green-700 font-medium">{withVerified.length} Verified</span>
+                    <span className="text-green-700 font-bold" aria-hidden="true">✓</span>
+                    <span className="text-green-700 font-medium">{withVerified} Verified</span>
                   </div>
                 )}
-                {withRatings.length > 0 && (
+                {withRatings > 0 && (
                   <div className="flex items-center gap-1">
-                    <span className="text-green-700">★</span>
-                    <span className="text-green-700 font-medium">{withRatings.length} Rated</span>
+                    <span className="text-green-700" aria-hidden="true">★</span>
+                    <span className="text-green-700 font-medium">{withRatings} Rated</span>
                   </div>
                 )}
-                {withPhone.length > 0 && (
+                {withPhone > 0 && (
                   <div className="flex items-center gap-1">
-                    <span className="text-green-700">📞</span>
-                    <span className="text-green-700 font-medium">{withPhone.length} Contactable</span>
+                    <span aria-hidden="true">📞</span>
+                    <span className="text-green-700 font-medium">{withPhone} Contactable</span>
                   </div>
                 )}
-                {withAddress.length > 0 && (
+                {withAddress > 0 && (
                   <div className="flex items-center gap-1">
-                    <span className="text-green-700">📍</span>
-                    <span className="text-green-700 font-medium">{withAddress.length} Located</span>
+                    <span aria-hidden="true">📍</span>
+                    <span className="text-green-700 font-medium">{withAddress} Located</span>
                   </div>
                 )}
               </div>
@@ -637,90 +661,77 @@ const App: React.FC = () => {
           );
         })()}
 
-        {/* Paginated results */}
-        {(() => {
-          const totalResults = searchState.results.length;
-          const totalPages = Math.ceil(totalResults / searchState.resultsPerPage);
-          const startIndex = (searchState.currentPage - 1) * searchState.resultsPerPage;
-          const endIndex = Math.min(startIndex + searchState.resultsPerPage, totalResults);
-          const paginatedResults = searchState.results.slice(startIndex, endIndex);
+        {paginatedResults.map((group) => (
+          <GroupCard
+            key={group.id}
+            group={group}
+            onClick={setSelectedGroup}
+            isSaved={isGroupSaved(group.id)}
+            onToggleSave={toggleSaveGroup}
+          />
+        ))}
 
-          return (
-            <>
-              {paginatedResults.map((group) => (
-                <GroupCard
-                  key={group.id}
-                  group={group}
-                  onClick={(g) => setSelectedGroup(g)}
-                  isSaved={isGroupSaved(group.id)}
-                  onToggleSave={toggleSaveGroup}
-                />
-              ))}
+        {/* Pagination controls */}
+        {totalPages > 1 && (
+          <nav aria-label="Search results pages" className="flex items-center justify-center gap-2 mt-6 mb-4">
+            <button
+              type="button"
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage === 1}
+              className="p-2 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={20} />
+            </button>
 
-              {/* Pagination controls */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-2 mt-6 mb-4">
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
+                // Show first, last, current, and adjacent pages
+                const showPage = page === 1 || page === totalPages ||
+                  Math.abs(page - currentPage) <= 1;
+                const showEllipsis = (page === 2 && currentPage > 3) ||
+                  (page === totalPages - 1 && currentPage < totalPages - 2);
+
+                if (!showPage && !showEllipsis) return null;
+                if (showEllipsis && !showPage) {
+                  return <span key={page} className="px-2 text-gray-400" aria-hidden="true">…</span>;
+                }
+
+                return (
                   <button
+                    key={page}
                     type="button"
-                    onClick={() => setSearchState(prev => ({ ...prev, currentPage: prev.currentPage - 1 }))}
-                    disabled={searchState.currentPage === 1}
-                    className="p-2 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    aria-label="Previous page"
+                    onClick={() => goToPage(page)}
+                    aria-label={`Page ${page}${currentPage === page ? ', current page' : ''}`}
+                    aria-current={currentPage === page ? 'page' : undefined}
+                    className={`min-w-[36px] h-9 rounded-lg text-sm font-semibold transition-colors ${
+                      currentPage === page
+                        ? 'bg-teal-600 text-white'
+                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
                   >
-                    <ChevronLeft size={20} />
+                    {page}
                   </button>
+                );
+              })}
+            </div>
 
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
-                      // Show first, last, current, and adjacent pages
-                      const showPage = page === 1 || page === totalPages ||
-                        Math.abs(page - searchState.currentPage) <= 1;
-                      const showEllipsis = page === 2 && searchState.currentPage > 3 ||
-                        page === totalPages - 1 && searchState.currentPage < totalPages - 2;
+            <button
+              type="button"
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className="p-2 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              aria-label="Next page"
+            >
+              <ChevronRight size={20} />
+            </button>
+          </nav>
+        )}
 
-                      if (!showPage && !showEllipsis) return null;
-                      if (showEllipsis && !showPage) {
-                        return <span key={page} className="px-2 text-gray-400">...</span>;
-                      }
-
-                      return (
-                        <button
-                          key={page}
-                          type="button"
-                          onClick={() => setSearchState(prev => ({ ...prev, currentPage: page }))}
-                          aria-label={`Page ${page}${searchState.currentPage === page ? ', current page' : ''}`}
-                          aria-current={searchState.currentPage === page ? 'page' : undefined}
-                          className={`min-w-[36px] h-9 rounded-lg text-sm font-semibold transition-colors ${
-                            searchState.currentPage === page
-                              ? 'bg-teal-600 text-white'
-                              : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-                          }`}
-                        >
-                          {page}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setSearchState(prev => ({ ...prev, currentPage: prev.currentPage + 1 }))}
-                    disabled={searchState.currentPage === totalPages}
-                    className="p-2 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    aria-label="Next page"
-                  >
-                    <ChevronRight size={20} />
-                  </button>
-                </div>
-              )}
-
-              {/* Page info */}
-              <div className="text-center text-xs text-gray-400 mb-4">
-                Showing {startIndex + 1}-{endIndex} of {totalResults} results
-              </div>
-            </>
-          );
-        })()}
+        {/* Page info */}
+        <div className="text-center text-xs text-gray-400 mb-4">
+          Showing {startIndex + 1}–{endIndex} of {totalResults} results
+        </div>
 
         <div className="text-center mb-4">
             <p className="text-xs text-gray-400">
@@ -733,74 +744,86 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#FAFAFA]">
-      <div className="bg-white/80 backdrop-blur-md pb-2 pt-1 px-4 sticky top-0 z-30 border-b border-gray-200/50">
-        <div className="flex justify-between items-center mb-4 pt-4">
+      <header
+        className="bg-white/85 backdrop-blur-md pb-3 px-4 sticky top-0 z-30 border-b border-gray-200/50"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.25rem)' }}
+      >
+        <div className="flex justify-between items-center mb-4 pt-3">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-gray-900">Support Group Finder</h1>
             <p className="text-gray-500 font-medium text-xs mt-0.5">You don't have to be alone.</p>
           </div>
-          <div className="w-9 h-9 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold text-xs shadow-inner">
-            JD
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center shadow-md shadow-teal-200" aria-hidden="true">
+            <Heart size={18} className="text-white" fill="currentColor" />
           </div>
         </div>
-        
-        <SearchBar 
+
+        <SearchBar
             topic={searchState.query}
             location={searchState.location}
             filters={searchState.filters}
             sortBy={searchState.sortBy}
             isLocating={searchState.isLocating}
             isLoading={searchState.isLoading}
-            onTopicChange={(val) => setSearchState(prev => ({ ...prev, query: val }))}
-            onLocationChange={(val) => setSearchState(prev => ({ ...prev, location: val }))}
+            onTopicChange={handleTopicChange}
+            onLocationChange={handleLocationChange}
             onFiltersChange={(newFilters) => setSearchState(prev => ({ ...prev, filters: newFilters }))}
             onSortChange={(newSort) => setSearchState(prev => ({ ...prev, sortBy: newSort }))}
             onLocateMe={handleLocateMe}
             onSearch={handleSearch}
         />
-        
+
         {searchState.error && (
-            <div className={`mt-3 p-4 rounded-xl flex items-start justify-between gap-3 border ${
+            <div role="alert" className={`mt-3 p-4 rounded-xl flex items-start justify-between gap-3 border ${
               searchState.error.includes('offline')
                 ? 'bg-amber-50 text-amber-700 border-amber-200'
                 : 'bg-red-50 text-red-600 border-red-100'
             }`}>
-                <div className="flex items-start gap-3">
-                  <AlertCircle size={18} className="shrink-0 mt-0.5"/>
-                  <div className="text-sm">
-                    <p className="font-semibold mb-1">{searchState.error.split('.')[0]}</p>
-                    {searchState.error.includes('different') && (
-                      <p className="text-xs opacity-90">Try a different search term or location</p>
-                    )}
-                  </div>
+                <div className="flex items-start gap-3 min-w-0">
+                  <AlertCircle size={18} className="shrink-0 mt-0.5" aria-hidden="true"/>
+                  <p className="text-sm font-medium">{searchState.error}</p>
                 </div>
-                {searchState.error.includes('offline') && (
+                <div className="flex items-center gap-1 shrink-0">
+                  {searchState.query.trim() && searchState.location.trim() && (
+                    <button
+                      type="button"
+                      onClick={handleSearch}
+                      className={`text-xs font-semibold whitespace-nowrap px-3 py-1.5 rounded-lg transition-colors ${
+                        searchState.error.includes('offline')
+                          ? 'bg-amber-100 hover:bg-amber-200'
+                          : 'bg-red-100 hover:bg-red-200'
+                      }`}
+                    >
+                      Retry
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={handleSearch}
-                    className="text-xs font-semibold whitespace-nowrap px-3 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 transition-colors"
+                    onClick={() => setSearchState(prev => ({ ...prev, error: null }))}
+                    aria-label="Dismiss error"
+                    className="p-1.5 opacity-60 hover:opacity-100 transition-opacity"
                   >
-                    Retry
+                    <X size={14} />
                   </button>
-                )}
+                </div>
             </div>
         )}
-      </div>
+      </header>
 
       <main className="px-4 pb-4">
         {activeTab === AppTab.SEARCH && renderContent()}
-        
+
         {activeTab === AppTab.SAVED && (
           savedGroups.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-[50vh] text-gray-400 animate-in fade-in">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                    <Heart size={24} className="text-gray-300" />
+                    <Heart size={24} className="text-gray-300" aria-hidden="true" />
                 </div>
                 <h3 className="text-gray-900 font-semibold mb-1">No Saved Groups</h3>
-                <p className="text-sm max-w-xs text-center">Groups you save will appear here for quick access.</p>
+                <p className="text-sm max-w-xs text-center">Tap the heart on any group to save it here for quick access.</p>
              </div>
           ) : (
-            <div className="mt-6 pb-24 animate-in fade-in">
+            <div className="mt-6 pb-28 animate-in fade-in">
               <div className="flex justify-between items-baseline mb-4 px-1">
                 <h2 className="text-gray-800 font-bold text-lg">
                   {savedGroups.length} Saved {savedGroups.length === 1 ? 'Group' : 'Groups'}
@@ -810,7 +833,7 @@ const App: React.FC = () => {
                 <GroupCard
                   key={group.id}
                   group={group}
-                  onClick={(g) => setSelectedGroup(g)}
+                  onClick={setSelectedGroup}
                   isSaved={true}
                   onToggleSave={toggleSaveGroup}
                 />
@@ -820,7 +843,7 @@ const App: React.FC = () => {
         )}
 
         {activeTab === AppTab.SETTINGS && (
-          <div className="mt-6 pb-24 animate-in fade-in">
+          <div className="mt-6 pb-28 animate-in fade-in">
             <h2 className="text-gray-800 font-bold text-lg mb-4 px-1">Settings</h2>
 
             <div className="space-y-4">
@@ -833,8 +856,11 @@ const App: React.FC = () => {
                     <button
                       key={num}
                       type="button"
+                      aria-pressed={searchState.resultsPerPage === num}
                       onClick={() => {
-                        localStorage.setItem(RESULTS_PER_PAGE_KEY, num.toString());
+                        try {
+                          localStorage.setItem(RESULTS_PER_PAGE_KEY, num.toString());
+                        } catch { /* storage unavailable */ }
                         setSearchState(prev => ({ ...prev, resultsPerPage: num, currentPage: 1 }));
                       }}
                       className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
@@ -846,6 +872,29 @@ const App: React.FC = () => {
                       {num}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Crisis Resources */}
+              <div className="bg-rose-50 rounded-xl p-4 border border-rose-100">
+                <h3 className="text-rose-900 font-semibold text-sm mb-1">Crisis Resources</h3>
+                <p className="text-rose-800/80 text-xs mb-3">
+                  If you or someone you know is struggling or in crisis, help is available right now.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href="tel:988"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-rose-600 text-white rounded-lg text-sm font-semibold hover:bg-rose-700 transition-colors"
+                  >
+                    <Phone size={14} aria-hidden="true" />
+                    Call 988
+                  </a>
+                  <a
+                    href="sms:988"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-rose-200 text-rose-700 rounded-lg text-sm font-semibold hover:bg-rose-100 transition-colors"
+                  >
+                    Text 988
+                  </a>
                 </div>
               </div>
 
@@ -863,7 +912,7 @@ const App: React.FC = () => {
                   }}
                   className="px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-semibold hover:bg-red-100 transition-colors flex items-center gap-2"
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={16} aria-hidden="true" />
                   Clear All Data
                 </button>
               </div>
@@ -876,30 +925,18 @@ const App: React.FC = () => {
                   We connect you with trusted resources from NAMI, Psychology Today, and local communities.
                 </p>
                 <div className="flex items-center gap-2 text-xs text-gray-400">
-                  <span className="font-semibold">Version 1.2.0</span>
-                  <span>•</span>
+                  <span className="font-semibold">Version {APP_VERSION}</span>
+                  <span aria-hidden="true">•</span>
                   <a
-                    href="https://github.com"
+                    href={GITHUB_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-teal-600 hover:underline flex items-center gap-1"
                   >
                     View on GitHub
-                    <ExternalLink size={12} />
+                    <ExternalLink size={12} aria-hidden="true" />
                   </a>
                 </div>
-              </div>
-
-              {/* Help & Feedback */}
-              <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
-                <h3 className="text-gray-900 font-semibold text-sm mb-1">Help & Feedback</h3>
-                <p className="text-gray-500 text-xs mb-3">Have questions or suggestions? We'd love to hear from you.</p>
-                <a
-                  href="mailto:support@example.com"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-semibold hover:bg-teal-700 transition-colors"
-                >
-                  Contact Support
-                </a>
               </div>
             </div>
           </div>
@@ -907,13 +944,13 @@ const App: React.FC = () => {
       </main>
 
       {selectedGroup && (
-        <GroupDetailModal 
-            group={selectedGroup} 
-            onClose={() => setSelectedGroup(null)} 
+        <GroupDetailModal
+            group={selectedGroup}
+            onClose={() => setSelectedGroup(null)}
         />
       )}
 
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} savedCount={savedGroups.length} />
     </div>
   );
 };

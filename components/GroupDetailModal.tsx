@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { SupportGroup } from '../types';
-import { X, MapPin, Calendar, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag } from 'lucide-react';
+import { X, MapPin, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag } from 'lucide-react';
 import { useToast } from './Toast';
 
 interface GroupDetailModalProps {
@@ -24,6 +24,15 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [onClose]);
+
+  // Lock background scrolling while the modal is open
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
 
   // Format full address
   const getFullAddress = () => {
@@ -56,25 +65,28 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
           text: shareText,
           url: group.url
         });
-      } catch (err) {
-        console.log("Error sharing", err);
+      } catch {
+        // User cancelled the share sheet - nothing to do
       }
     } else {
-      navigator.clipboard.writeText(shareText);
-      showToast("Group info copied to clipboard!", "success");
+      copyToClipboard(shareText, 'Group info copied to clipboard!');
     }
   };
 
-  const handleCopyAddress = () => {
-    const address = getFullAddress();
-    navigator.clipboard.writeText(address);
-    showToast("Address copied!", "success");
+  const copyToClipboard = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(successMessage, 'success');
+    } catch {
+      showToast('Could not copy to clipboard', 'error');
+    }
   };
+
+  const handleCopyAddress = () => copyToClipboard(getFullAddress(), 'Address copied!');
 
   const handleCopyPhone = () => {
     if (group.phoneNumber) {
-      navigator.clipboard.writeText(group.phoneNumber);
-      showToast("Phone number copied!", "success");
+      copyToClipboard(group.phoneNumber, 'Phone number copied!');
     }
   };
 
@@ -100,7 +112,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
     >
       <div
         ref={modalRef}
-        className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-300 flex flex-col max-h-[85vh]"
+        className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 flex flex-col max-h-[85vh]"
         onClick={handleModalClick}
       >
         {/* Header Section */}
@@ -142,8 +154,14 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
               {group.name}
             </h2>
             <div className="flex items-center text-sm text-gray-500">
-              <MapPin size={16} className="text-teal-600 mr-1.5" />
+              <MapPin size={16} className="text-teal-600 mr-1.5" aria-hidden="true" />
               {group.location}
+              {group.distanceMiles !== undefined && (
+                <span className="ml-2 inline-flex items-center text-xs text-teal-700 font-semibold bg-teal-100/70 px-2 py-0.5 rounded-full">
+                  <Navigation size={11} className="mr-1" aria-hidden="true" />
+                  {group.distanceMiles < 1 ? '< 1 mi' : `${group.distanceMiles} mi`}
+                </span>
+              )}
             </div>
           </div>
         </div>

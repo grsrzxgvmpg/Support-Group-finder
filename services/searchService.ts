@@ -1,6 +1,16 @@
 import { SupportGroup, SearchFilters, SortOption, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter } from "../types";
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+// Deterministic ID derived from the group's identity so the same group
+// found in different searches gets the same ID. This keeps the saved/heart
+// state consistent across sessions and prevents duplicate saves.
+const stableGroupId = (group: { name: string; address?: string; location?: string; url?: string }): string => {
+  const key = `${group.name}|${group.address || group.location || ''}|${group.url || ''}`.toLowerCase();
+  let hash = 5381;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) + hash + key.charCodeAt(i)) | 0;
+  }
+  return `g${(hash >>> 0).toString(36)}`;
+};
 
 // Calculate completeness score based on available fields
 function calculateCompletenessScore(group: Partial<SupportGroup>): number {
@@ -224,7 +234,7 @@ function getFallbackResults(topic: string, location: string, filters: SearchFilt
 
   return resources.map(r => ({
     ...r,
-    id: generateId(),
+    id: stableGroupId(r),
     topic,
     completenessScore: calculateCompletenessScore(r)
   }));
@@ -257,7 +267,7 @@ async function searchViaAPI(
 
   return (data.results || []).map((result: any) => {
     const group = {
-      id: generateId(),
+      id: stableGroupId(result),
       name: result.name,
       description: result.description,
       topic,
@@ -373,7 +383,7 @@ export const searchSupportGroups = async (
     const filterText = activeFilters.length > 0 ? `for ${activeFilters.join(', ')} ` : '';
 
     const noMatchResult: SupportGroup = {
-      id: generateId(),
+      id: stableGroupId({ name: `search-${topic}`, location, url: searchQuery }),
       name: `Search for specific ${topic} resources`,
       description: `No exact matches found ${filterText}in your area. Try widening your filters or click to search Google for more options.`,
       topic,

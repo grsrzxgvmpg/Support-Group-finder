@@ -1,5 +1,5 @@
-import React from 'react';
-import { Search, MapPin, Loader2, SlidersHorizontal, ArrowUpDown, X, Users, Navigation } from 'lucide-react';
+import React, { useState } from 'react';
+import { Search, MapPin, Loader2, SlidersHorizontal, ArrowUpDown, X, Users, Navigation, ChevronDown, Video } from 'lucide-react';
 import { SearchFilters, SortOption, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter } from '../types';
 
 interface SearchBarProps {
@@ -25,6 +25,36 @@ const DEFAULT_FILTERS: SearchFilters = {
   distance: DistanceFilter.ANY
 };
 
+interface FilterSelectProps {
+  label: string;
+  value: string;
+  options: string[];
+  icon?: React.ReactNode;
+  onChange: (value: string) => void;
+}
+
+const FilterSelect: React.FC<FilterSelectProps> = ({ label, value, options, icon, onChange }) => (
+  <div className="relative">
+    {icon && (
+      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" aria-hidden="true">
+        {icon}
+      </div>
+    )}
+    <select
+      title={label}
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={`w-full appearance-none bg-white border border-gray-200 rounded-lg py-2.5 ${icon ? 'pl-9' : 'pl-3'} pr-7 text-xs font-semibold text-gray-600 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none shadow-sm`}
+    >
+      {options.map(o => (
+        <option key={o} value={o}>{o}</option>
+      ))}
+    </select>
+    <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" aria-hidden="true" />
+  </div>
+);
+
 export const SearchBar: React.FC<SearchBarProps> = ({
   topic,
   location,
@@ -39,13 +69,6 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   onSearch,
   isLoading
 }) => {
-  const hasActiveFilters =
-    filters.sessionType !== SessionType.ANY ||
-    filters.leadershipType !== LeadershipType.ANY ||
-    filters.meetingType !== MeetingType.ALL ||
-    filters.ageGroup !== AgeGroup.ALL ||
-    filters.distance !== DistanceFilter.ANY;
-
   const activeFilterCount = [
     filters.sessionType !== SessionType.ANY,
     filters.leadershipType !== LeadershipType.ANY,
@@ -54,9 +77,16 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     filters.distance !== DistanceFilter.ANY
   ].filter(Boolean).length;
 
+  const hasActiveFilters = activeFilterCount > 0;
+
+  // Keep the panel open if the user already has filters applied
+  const [filtersOpen, setFiltersOpen] = useState(hasActiveFilters);
+
   const resetFilters = () => {
     onFiltersChange(DEFAULT_FILTERS);
   };
+
+  const canSearch = !isLoading && topic.trim().length > 0 && location.trim().length > 0;
 
   return (
     <div className="space-y-3" role="search" aria-label="Support group search">
@@ -73,16 +103,19 @@ export const SearchBar: React.FC<SearchBarProps> = ({
               onChange={(e) => onLocationChange(e.target.value)}
               placeholder="City, Zip, or 'Current Location'"
               aria-label="Location"
+              autoComplete="off"
+              enterKeyHint="search"
               className="w-full bg-transparent border-none py-3.5 pl-10 pr-16 text-gray-900 placeholder-gray-400 focus:ring-0 text-[15px] font-medium"
-              onKeyDown={(e) => e.key === 'Enter' && onSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && canSearch && onSearch()}
             />
             <button
                 type="button"
                 onClick={onLocateMe}
+                disabled={isLocating}
                 aria-label="Use current location"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-teal-600 hover:text-teal-700 text-xs font-bold uppercase tracking-wide px-2 py-1 rounded hover:bg-teal-50 transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-1"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-teal-600 hover:text-teal-700 text-xs font-bold uppercase tracking-wide px-2 py-1 rounded hover:bg-teal-50 transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-1 disabled:opacity-50"
             >
-                Locate
+                {isLocating ? 'Locating…' : 'Locate'}
             </button>
           </div>
 
@@ -97,140 +130,119 @@ export const SearchBar: React.FC<SearchBarProps> = ({
               onChange={(e) => onTopicChange(e.target.value)}
               placeholder="What support do you need? (e.g. Anxiety)"
               aria-label="Support topic"
-              className="w-full bg-transparent border-none py-3.5 pl-10 pr-4 text-gray-900 placeholder-gray-400 focus:ring-0 text-[15px] font-medium"
-              onKeyDown={(e) => e.key === 'Enter' && onSearch()}
+              autoComplete="off"
+              enterKeyHint="search"
+              className="w-full bg-transparent border-none py-3.5 pl-10 pr-10 text-gray-900 placeholder-gray-400 focus:ring-0 text-[15px] font-medium"
+              onKeyDown={(e) => e.key === 'Enter' && canSearch && onSearch()}
             />
+            {topic && (
+              <button
+                type="button"
+                onClick={() => onTopicChange('')}
+                aria-label="Clear topic"
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-300 hover:text-gray-500 rounded-full transition-colors"
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
       </div>
 
-      {/* Filters Row 1 - Primary Filters */}
-      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+      {/* Filters toggle + Sort row */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen(open => !open)}
+          aria-expanded={filtersOpen}
+          aria-controls="filter-panel"
+          className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg text-xs font-semibold border shadow-sm transition-colors ${
+            hasActiveFilters
+              ? 'bg-teal-50 border-teal-200 text-teal-700'
+              : 'bg-white border-gray-200 text-gray-600 hover:border-teal-200'
+          }`}
+        >
+          <SlidersHorizontal size={14} aria-hidden="true" />
+          Filters
+          {activeFilterCount > 0 && (
+            <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center">
+              {activeFilterCount}
+            </span>
+          )}
+          <ChevronDown
+            size={14}
+            aria-hidden="true"
+            className={`transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
+          />
+        </button>
 
-        {/* Session Type Filter (Group vs Individual) */}
-        <div className="relative flex-1 min-w-[110px]">
-          <select
-            title="Session format"
-            aria-label="Session format"
-            value={filters.sessionType}
-            onChange={(e) => onFiltersChange({ ...filters, sessionType: e.target.value as SessionType })}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-lg py-2.5 pl-3 pr-6 text-xs font-semibold text-gray-600 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none shadow-sm"
-          >
-            {Object.values(SessionType).map(t => (
-                <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Leadership Type Filter (Peer vs Professional) */}
-        <div className="relative flex-1 min-w-[110px]">
-          <select
-            title="Leadership type"
-            aria-label="Leadership type"
-            value={filters.leadershipType}
-            onChange={(e) => onFiltersChange({ ...filters, leadershipType: e.target.value as LeadershipType })}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-lg py-2.5 pl-3 pr-6 text-xs font-semibold text-gray-600 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none shadow-sm"
-          >
-            {Object.values(LeadershipType).map(t => (
-                <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Age Group Filter */}
-        <div className="relative flex-1 min-w-[110px]">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-            <Users size={14} />
-          </div>
-          <select
-            title="Age group"
-            aria-label="Age group"
-            value={filters.ageGroup}
-            onChange={(e) => onFiltersChange({ ...filters, ageGroup: e.target.value as AgeGroup })}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-lg py-2.5 pl-9 pr-6 text-xs font-semibold text-gray-600 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none shadow-sm"
-          >
-            {Object.values(AgeGroup).map(a => (
-                <option key={a} value={a}>{a}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Filters Row 2 - Meeting Type, Distance & Sort */}
-      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-        {/* Meeting Type Filter (In-Person vs Online) */}
-        <div className="relative flex-1 min-w-[110px]">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-            <SlidersHorizontal size={14} />
-          </div>
-          <select
-            title="Meeting type"
-            aria-label="Meeting type"
-            value={filters.meetingType}
-            onChange={(e) => onFiltersChange({ ...filters, meetingType: e.target.value as MeetingType })}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-lg py-2.5 pl-9 pr-8 text-xs font-semibold text-gray-600 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none shadow-sm"
-          >
-            {Object.values(MeetingType).map(t => (
-                <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Distance Filter */}
-        <div className="relative flex-1 min-w-[120px]">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-            <Navigation size={14} />
-          </div>
-          <select
-            title="Distance filter"
-            aria-label="Distance filter"
-            value={filters.distance}
-            onChange={(e) => onFiltersChange({ ...filters, distance: e.target.value as DistanceFilter })}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-lg py-2.5 pl-9 pr-8 text-xs font-semibold text-gray-600 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none shadow-sm"
-          >
-            {Object.values(DistanceFilter).map(d => (
-                <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Sort Option */}
-        <div className="relative flex-1 min-w-[110px]">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-            <ArrowUpDown size={14} />
-          </div>
-          <select
-            title="Sort by"
-            aria-label="Sort by"
+        <div className="flex-1">
+          <FilterSelect
+            label="Sort by"
             value={sortBy}
-            onChange={(e) => onSortChange(e.target.value as SortOption)}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-lg py-2.5 pl-9 pr-8 text-xs font-semibold text-gray-600 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none shadow-sm"
-          >
-            {Object.values(SortOption).map(s => (
-                <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+            options={Object.values(SortOption)}
+            icon={<ArrowUpDown size={14} />}
+            onChange={(v) => onSortChange(v as SortOption)}
+          />
         </div>
 
-        {/* Reset Filters Button - shows when filters active */}
         {hasActiveFilters && (
           <button
             type="button"
             onClick={resetFilters}
-            className="flex items-center gap-1.5 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors whitespace-nowrap"
+            className="flex items-center gap-1 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors whitespace-nowrap"
           >
-            <X size={14} />
-            Reset ({activeFilterCount})
+            <X size={14} aria-hidden="true" />
+            Reset
           </button>
         )}
       </div>
 
+      {/* Collapsible filter panel */}
+      {filtersOpen && (
+        <div id="filter-panel" className="grid grid-cols-2 gap-2 animate-in slide-in-from-top-2">
+          <FilterSelect
+            label="Meeting type"
+            value={filters.meetingType}
+            options={Object.values(MeetingType)}
+            icon={<Video size={14} />}
+            onChange={(v) => onFiltersChange({ ...filters, meetingType: v as MeetingType })}
+          />
+          <FilterSelect
+            label="Distance"
+            value={filters.distance}
+            options={Object.values(DistanceFilter)}
+            icon={<Navigation size={14} />}
+            onChange={(v) => onFiltersChange({ ...filters, distance: v as DistanceFilter })}
+          />
+          <FilterSelect
+            label="Session format"
+            value={filters.sessionType}
+            options={Object.values(SessionType)}
+            onChange={(v) => onFiltersChange({ ...filters, sessionType: v as SessionType })}
+          />
+          <FilterSelect
+            label="Leadership"
+            value={filters.leadershipType}
+            options={Object.values(LeadershipType)}
+            onChange={(v) => onFiltersChange({ ...filters, leadershipType: v as LeadershipType })}
+          />
+          <FilterSelect
+            label="Age group"
+            value={filters.ageGroup}
+            options={Object.values(AgeGroup)}
+            icon={<Users size={14} />}
+            onChange={(v) => onFiltersChange({ ...filters, ageGroup: v as AgeGroup })}
+          />
+        </div>
+      )}
+
       <button
         type="button"
         onClick={onSearch}
-        disabled={isLoading || !topic || !location}
+        disabled={!canSearch}
         aria-label={isLoading ? 'Searching for groups' : 'Search for support groups'}
         className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all active:scale-[0.98] flex justify-center items-center focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 ${
-          isLoading || !topic || !location
+          !canSearch
             ? 'bg-gray-300 cursor-not-allowed shadow-none'
             : 'bg-teal-600 hover:bg-teal-700 shadow-teal-600/20'
         }`}
@@ -238,7 +250,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
         {isLoading ? (
             <>
                 <Loader2 size={20} className="animate-spin mr-2" aria-hidden="true"/>
-                <span>Finding Community...</span>
+                <span>Finding Community…</span>
             </>
         ) : (
             'Search Groups'

@@ -52,6 +52,9 @@ export interface SupportGroup {
 
   // Completeness score for quality indication
   completenessScore?: number; // 0-100, based on available fields
+
+  // Timestamp set when the user saves the group
+  savedAt?: number;
 }
 
 export enum MeetingType {
