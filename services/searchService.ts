@@ -38,6 +38,45 @@ function calculateCompletenessScore(group: Partial<SupportGroup>): number {
   return Math.round((score / maxScore) * 100);
 }
 
+// People describe what they need in everyday words ("panic attacks",
+// "drinking problem", "lost my husband"). Map common lay phrasing onto
+// terms that actually return good search results. First match wins; the
+// user's original wording is preserved for display.
+const TOPIC_SYNONYMS: { pattern: RegExp; term: string }[] = [
+  { pattern: /\bsuicid\w*\b/i, term: 'suicide prevention' },
+  { pattern: /\bpanic( attacks?)?\b|\bsocial anxiety\b|\bworr(y|ied|ying)\b/i, term: 'anxiety' },
+  { pattern: /\b(sad|sadness|feeling down|hopeless(ness)?|depress\w*)\b/i, term: 'depression' },
+  { pattern: /\b(widowe?d?r?|bereave(d|ment)|lost (my|a) \w+|loss of)\b/i, term: 'grief' },
+  { pattern: /\b(drink(ing)?( problem)?|alcohol(ism|ic)?s?)\b/i, term: 'alcohol addiction' },
+  { pattern: /\b(drugs?|substance (ab)?use|opioids?|heroin|meth|fentanyl|narcotics?)\b/i, term: 'addiction' },
+  { pattern: /\bgambling\b/i, term: 'gambling addiction' },
+  { pattern: /\b(anorexi[ac]|bulimi[ac]|binge eating|overeat(ing|er)s?)\b/i, term: 'eating disorders' },
+  { pattern: /\b(gay|lesbian|bisexual|trans(gender)?|queer|non-?binary)\b/i, term: 'LGBTQ+' },
+  { pattern: /\b(veterans?|combat|military)\b/i, term: 'veterans PTSD' },
+  { pattern: /\b(trauma(tized)?|abuse(d)? survivor)\b/i, term: 'trauma' },
+  { pattern: /\bcaregiv(er|ing)s?\b/i, term: 'caregiver support' }
+];
+
+// Translate a lay search phrase into an effective search term.
+// Returns the original topic when no mapping applies.
+export function normalizeTopicForSearch(topic: string): string {
+  const trimmed = topic.trim();
+  for (const { pattern, term } of TOPIC_SYNONYMS) {
+    if (pattern.test(trimmed) && trimmed.toLowerCase() !== term.toLowerCase()) {
+      return term;
+    }
+  }
+  return trimmed;
+}
+
+// Detect searches that suggest the user may be in crisis so the UI can
+// surface the 988 lifeline alongside results.
+const CRISIS_PATTERN = /\b(suicid\w*|kill (myself|themselves)|end (my|their) life|self[- ]?harm|hurt (myself|themselves)|don'?t want to (live|be here))\b/i;
+
+export function isCrisisQuery(topic: string): boolean {
+  return CRISIS_PATTERN.test(topic);
+}
+
 // API endpoint - a same-origin serverless function on the web. Native
 // (Capacitor) builds have no same-origin server, so VITE_API_BASE_URL must
 // point at the deployed backend (e.g. https://your-app.vercel.app) at build
@@ -62,8 +101,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.8,
-    reviewCount: 2847,
+    isNationalResource: true,
     groupType: "Peer Support"
   },
   {
@@ -81,8 +119,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.7,
-    reviewCount: 892,
+    isNationalResource: true,
     groupType: "Peer Support"
   },
   {
@@ -99,8 +136,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: false,
     isGroup: true,
     isPeerLed: false,
-    rating: 4.6,
-    reviewCount: 1523,
+    isNationalResource: true,
     groupType: "Therapy Group"
   },
   {
@@ -117,8 +153,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.3,
-    reviewCount: 4521,
+    isNationalResource: true,
     groupType: "Peer Support"
   },
   {
@@ -135,8 +170,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: false,
-    rating: 4.4,
-    reviewCount: 1205,
+    isNationalResource: true,
     groupType: "Referral Service"
   },
   {
@@ -153,8 +187,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.9,
-    reviewCount: 5623,
+    isNationalResource: true,
     groupType: "12-Step"
   },
   {
@@ -171,8 +204,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.5,
-    reviewCount: 634,
+    isNationalResource: true,
     groupType: "Peer Support"
   }
 ];
@@ -213,8 +245,9 @@ function applyFilters(results: SupportGroup[], filters: SearchFilters): SupportG
   return filtered;
 }
 
-// Get fallback results
-function getFallbackResults(topic: string, location: string, filters: SearchFilters): SupportGroup[] {
+// Get fallback results. `topic` is the user's original wording (kept for
+// display); `searchTopic` is the normalized term used in search URLs.
+function getFallbackResults(topic: string, location: string, filters: SearchFilters, searchTopic: string = topic): SupportGroup[] {
   let resources = [...FALLBACK_RESOURCES];
 
   // Apply all filters
@@ -225,14 +258,13 @@ function getFallbackResults(topic: string, location: string, filters: SearchFilt
     name: `Find ${topic} Groups in ${location}`,
     description: `Search Google for current ${topic.toLowerCase()} support groups with addresses, phone numbers, and meeting times near ${location}.`,
     location: location,
-    website: `https://www.google.com/search?q=${encodeURIComponent(`${topic} support group ${location} address phone`)}`,
-    url: `https://www.google.com/search?q=${encodeURIComponent(`${topic} support group ${location} address phone`)}`,
+    website: `https://www.google.com/search?q=${encodeURIComponent(`${searchTopic} support group ${location} address phone`)}`,
+    url: `https://www.google.com/search?q=${encodeURIComponent(`${searchTopic} support group ${location} address phone`)}`,
     schedule: "Live search results",
     sourceName: "Google",
     isFallbackUrl: true,
     isOnline: false,
     isGroup: true,
-    rating: 5.0,
     groupType: "Search"
   });
 
@@ -355,16 +387,23 @@ export const searchSupportGroups = async (
   filters: SearchFilters,
   sortBy: SortOption
 ): Promise<SupportGroup[]> => {
+  // Search with the normalized term ("panic attacks" -> "anxiety") while
+  // keeping the user's original wording for everything they see
+  const searchTopic = normalizeTopicForSearch(topic);
+
   let results: SupportGroup[] = [];
   let apiResultCount = 0;
 
   try {
-    results = await searchViaAPI(topic, location, filters);
+    results = await searchViaAPI(searchTopic, location, filters);
     apiResultCount = results.length;
   } catch (error) {
     console.error('API search error:', error);
     // API not available or failed - use fallback
   }
+
+  // Results display the user's original topic
+  results = results.map(r => ({ ...r, topic }));
 
   // Apply client-side filters for additional precision
   const filteredResults = applyFilters(results, filters);
@@ -375,7 +414,7 @@ export const searchSupportGroups = async (
 
   if (filtersEliminatedResults && filtersActive) {
     // Filters were too restrictive - create a targeted Google search
-    const searchQuery = buildFilteredSearchQuery(topic, location, filters);
+    const searchQuery = buildFilteredSearchQuery(searchTopic, location, filters);
     // Build filter description
     const activeFilters = [];
     if (filters.meetingType !== MeetingType.ALL) activeFilters.push(`${filters.meetingType.toLowerCase()}`);
@@ -404,7 +443,7 @@ export const searchSupportGroups = async (
     };
 
     // Get matching fallbacks only
-    const matchingFallbacks = getFallbackResults(topic, location, filters).filter(r => r.sourceName !== 'Google');
+    const matchingFallbacks = getFallbackResults(topic, location, filters, searchTopic).filter(r => r.sourceName !== 'Google');
 
     if (matchingFallbacks.length > 0) {
       // We have some matching national resources
@@ -419,10 +458,10 @@ export const searchSupportGroups = async (
 
   // If no results at all, use fallback
   if (results.length === 0) {
-    results = getFallbackResults(topic, location, filters);
+    results = getFallbackResults(topic, location, filters, searchTopic);
   } else {
     // Append matching fallback resources for comprehensiveness
-    const fallbacks = getFallbackResults(topic, location, filters)
+    const fallbacks = getFallbackResults(topic, location, filters, searchTopic)
       .filter(r => r.sourceName !== 'Google')
       .slice(0, 3);
     results = [...results, ...fallbacks];

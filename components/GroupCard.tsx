@@ -80,7 +80,9 @@ const GroupCardComponent: React.FC<GroupCardProps> = ({ group, onClick, isSaved 
   // Collect all applicable badges with priority ordering
   const allBadges: { label: string; bg: string; text: string }[] = [];
 
-  if (isTrustedOrg) {
+  if (group.isNationalResource) {
+    allBadges.push({ label: 'National resource', bg: 'bg-blue-50', text: 'text-blue-700' });
+  } else if (isTrustedOrg) {
     allBadges.push({ label: '✓ Verified', bg: 'bg-blue-50', text: 'text-blue-700' });
   }
   if (group.sourceName) {

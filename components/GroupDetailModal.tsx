@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { SupportGroup } from '../types';
-import { X, MapPin, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag } from 'lucide-react';
+import { X, MapPin, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag, ChevronDown } from 'lucide-react';
 import { useToast } from './Toast';
 import { shareContent } from '../services/platform';
 
@@ -9,10 +9,19 @@ interface GroupDetailModalProps {
   onClose: () => void;
 }
 
+const FIRST_CALL_QUESTIONS = [
+  'Are you currently meeting, and when is the next meeting?',
+  'Is the group open to newcomers? Do I need to register first?',
+  'Is there any cost to attend?',
+  'Who leads the group — peers or a professional?',
+  'Is it in person or online? Where exactly do you meet?'
+];
+
 export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClose }) => {
   const { showToast } = useToast();
   const modalRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [showCallGuide, setShowCallGuide] = useState(false);
 
   // Focus management - focus close button when modal opens
   useEffect(() => {
@@ -123,6 +132,11 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
 
           <div className="flex flex-col gap-3">
             <div className="flex gap-2 flex-wrap">
+              {group.isNationalResource && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                  National resource
+                </span>
+              )}
               {group.sourceName && (
                 <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
                   {group.sourceName}
@@ -271,6 +285,42 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
                 </div>
               )}
             </div>
+          </div>
+
+          {/* First-call guide - making the call is often the hardest step */}
+          <div className="mb-6">
+            <button
+              type="button"
+              onClick={() => setShowCallGuide(open => !open)}
+              aria-expanded={showCallGuide}
+              className="w-full flex items-center justify-between p-4 bg-teal-50 border border-teal-100 rounded-xl text-left hover:bg-teal-100/60 transition-colors"
+            >
+              <span className="flex items-center gap-2.5">
+                <Phone size={16} className="text-teal-600 shrink-0" aria-hidden="true" />
+                <span className="text-sm font-bold text-teal-900">First time reaching out? What to ask</span>
+              </span>
+              <ChevronDown
+                size={16}
+                aria-hidden="true"
+                className={`text-teal-600 shrink-0 transition-transform ${showCallGuide ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {showCallGuide && (
+              <div className="mt-2 p-4 bg-white border border-teal-100 rounded-xl animate-in slide-in-from-top-2">
+                <ul className="space-y-2.5">
+                  {FIRST_CALL_QUESTIONS.map((question) => (
+                    <li key={question} className="flex items-start gap-2.5 text-sm text-gray-700">
+                      <span className="text-teal-500 font-bold mt-0.5" aria-hidden="true">•</span>
+                      {question}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500 leading-relaxed">
+                  It's okay to say <em>"this is my first time looking for a support group."</em>{' '}
+                  Organizers expect first-time callers and are glad you reached out.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Info Grid */}

@@ -30,6 +30,7 @@ export interface SupportGroup {
   isFallbackUrl?: boolean;
   isOnline?: boolean;
   isFree?: boolean;
+  isNationalResource?: boolean; // Curated national organization (NAMI, SAMHSA, ...)
 
   // Ratings
   rating?: number;

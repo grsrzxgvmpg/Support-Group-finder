@@ -47,5 +47,18 @@ npm run android   # build + sync + open Android Studio
 npm run ios       # build + sync + open Xcode (macOS)
 ```
 
+## Roadmap
+
+- **Real meeting schedules** — integrate sources that publish actual meeting times
+  (the open [Meeting Guide JSON format](https://github.com/code4recovery/spec) used by
+  AA/12-step intergroups, NAMI affiliate listings, DBSA online groups) so results can
+  show *"Tuesday 7 PM · open to newcomers"* instead of just an address. Requires
+  verifying/aggregating per-region feeds server-side.
+- Map view of nearby results (Leaflet + OpenStreetMap, no API key)
+- Outreach tracker on saved groups (to contact / waitlisted / scheduled + notes)
+- Spanish localization
+- Provider search mode (NPPES NPI registry + SAMHSA findtreatment.gov data:
+  credentials, insurance/payment, services)
+
 ## Repository
 [https://github.com/grsrzxgvmpg/Support-Group-finder](https://github.com/grsrzxgvmpg/Support-Group-finder)

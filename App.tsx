@@ -4,12 +4,12 @@ import { SearchBar } from './components/SearchBar';
 import { GroupCard } from './components/GroupCard';
 import { GroupDetailModal } from './components/GroupDetailModal';
 import { AppTab, SearchState, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter, SortOption, SupportGroup, UserCoordinates } from './types';
-import { searchSupportGroups } from './services/searchService';
+import { searchSupportGroups, isCrisisQuery } from './services/searchService';
 import { isNativePlatform, getCurrentPosition, triggerHaptic, LocationError } from './services/platform';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useSavedGroups } from './hooks/useSavedGroups';
 import { useRecentSearches } from './hooks/useRecentSearches';
-import { AlertCircle, Heart, ShieldCheck, ExternalLink, Trash2, Clock, X, ChevronLeft, ChevronRight, Navigation, Phone } from 'lucide-react';
+import { AlertCircle, Heart, ShieldCheck, ExternalLink, Trash2, Clock, X, ChevronLeft, ChevronRight, Navigation, Phone, Lock } from 'lucide-react';
 
 const APP_VERSION = '1.3.0';
 const GITHUB_URL = 'https://github.com/grsrzxgvmpg/support-group-finder';
@@ -142,6 +142,22 @@ interface DistanceFilterInfo {
   total: number;
   filterLabel: string;
 }
+
+const CrisisBanner: React.FC = () => (
+  <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3">
+    <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+      <Phone size={16} className="text-rose-600" aria-hidden="true" />
+    </div>
+    <div className="text-sm">
+      <p className="font-bold text-rose-900">In crisis or need to talk right now?</p>
+      <p className="text-rose-800/80 mt-0.5">
+        Call or text{' '}
+        <a href="tel:988" className="font-bold text-rose-700 underline underline-offset-2">988</a>
+        {' '}— the Suicide &amp; Crisis Lifeline. Free, confidential, 24/7.
+      </p>
+    </div>
+  </div>
+);
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab);
@@ -447,8 +463,13 @@ const App: React.FC = () => {
     shouldAutoSearch.current = true;
   };
 
+  // Tapping a topic chip searches immediately when a location is already
+  // set - one tap instead of chip + Search button
   const handleTopicClick = (topic: string) => {
     setSearchState(prev => ({ ...prev, query: topic }));
+    if (searchState.location.trim()) {
+      shouldAutoSearch.current = true;
+    }
   };
 
   const goToPage = (page: number) => {
@@ -462,20 +483,7 @@ const App: React.FC = () => {
     if (searchState.results.length === 0 && !searchState.isLoading) {
       return (
         <div className="mt-6 animate-in fade-in duration-500">
-          {/* Crisis support banner */}
-          <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3">
-            <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
-              <Phone size={16} className="text-rose-600" aria-hidden="true" />
-            </div>
-            <div className="text-sm">
-              <p className="font-bold text-rose-900">In crisis or need to talk right now?</p>
-              <p className="text-rose-800/80 mt-0.5">
-                Call or text{' '}
-                <a href="tel:988" className="font-bold text-rose-700 underline underline-offset-2">988</a>
-                {' '}— the Suicide &amp; Crisis Lifeline. Free, confidential, 24/7.
-              </p>
-            </div>
-          </div>
+          <CrisisBanner />
 
           {/* Recent Searches */}
           {recentSearches.length > 0 && (
@@ -541,6 +549,11 @@ const App: React.FC = () => {
               We connect you with trusted community sources like NAMI, Psychology Today, and local support networks to ensure you find safe and active groups.
             </p>
           </div>
+
+          <p className="mt-4 mb-2 flex items-center justify-center gap-1.5 text-xs text-gray-400">
+            <Lock size={12} aria-hidden="true" />
+            Private by design — no account needed. Your searches and saved groups stay on this device.
+          </p>
         </div>
       );
     }
@@ -587,6 +600,9 @@ const App: React.FC = () => {
 
     return (
       <div className="mt-6 pb-28 animate-in slide-in-from-bottom-2 duration-500">
+        {/* Surface the lifeline prominently when the search suggests crisis */}
+        {isCrisisQuery(searchState.query) && <CrisisBanner />}
+
         <div className="flex justify-between items-baseline mb-4 px-1">
             <h2 className="text-gray-800 font-bold text-lg" role="status" aria-live="polite" aria-atomic="true">
             {totalResults} {totalResults === 1 ? 'Group' : 'Groups'} Found
@@ -607,12 +623,38 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Filter notice when results are limited */}
-        {hasActiveFilters && onlyFallbackResults && totalResults <= 3 && (
-          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-            <p className="text-amber-800 text-sm">
-              <strong>Limited results:</strong> Your filters may be too specific for this area. Try broadening your search criteria for more options.
+        {/* No verified local listings - offer one-tap pivots instead of a dead end */}
+        {onlyFallbackResults && (
+          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <p className="text-amber-800 text-sm mb-3">
+              We couldn't find verified local listings for{' '}
+              <strong>{searchState.query.trim() || 'this topic'}</strong> near{' '}
+              <strong>{searchState.location.trim() || 'your area'}</strong>.
+              The national resources below can connect you with a group.
             </p>
+            <div className="flex flex-wrap gap-2">
+              {searchState.filters.meetingType !== MeetingType.ONLINE && (
+                <button
+                  type="button"
+                  onClick={() => setSearchState(prev => ({
+                    ...prev,
+                    filters: { ...prev.filters, meetingType: MeetingType.ONLINE }
+                  }))}
+                  className="px-3 py-1.5 bg-white border border-amber-300 text-amber-800 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
+                >
+                  Search online groups instead
+                </button>
+              )}
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={() => setSearchState(prev => ({ ...prev, filters: { ...DEFAULT_FILTERS } }))}
+                  className="px-3 py-1.5 bg-white border border-amber-300 text-amber-800 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
+                >
+                  Clear all filters
+                </button>
+              )}
+            </div>
           </div>
         )}
 

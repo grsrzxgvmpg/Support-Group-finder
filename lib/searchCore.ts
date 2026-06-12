@@ -178,8 +178,33 @@ function buildQuery(params: SearchParams, isOnline: boolean): string {
 
 const PHONE_REGEX = /\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/;
 
+// In-memory cache: repeat searches are common (back-navigation, filter
+// tweaking, multiple users in one area) and each Serper call costs quota.
+// Serverless instances keep this for their warm lifetime; the Vite dev
+// server keeps it for the whole session.
+const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 500;
+const searchCache = new Map<string, { expires: number; results: SearchResultItem[] }>();
+
+function cacheKey(params: SearchParams): string {
+  return [
+    params.topic.toLowerCase(),
+    params.location.toLowerCase(),
+    params.meetingType || '',
+    params.sessionType || '',
+    params.leadershipType || '',
+    params.ageGroup || ''
+  ].join('|');
+}
+
 // Perform the search against the Serper API and normalize results
 export async function performSearch(params: SearchParams, apiKey: string): Promise<SearchResultItem[]> {
+  const key = cacheKey(params);
+  const cached = searchCache.get(key);
+  if (cached && cached.expires > Date.now()) {
+    return cached.results;
+  }
+
   const isOnline = params.meetingType === 'Online';
   const query = buildQuery(params, isOnline);
 
@@ -279,6 +304,13 @@ export async function performSearch(params: SearchParams, apiKey: string): Promi
       });
     }
   }
+
+  // Evict the oldest entry once the cache is full (Map preserves insertion order)
+  if (searchCache.size >= CACHE_MAX_ENTRIES) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest !== undefined) searchCache.delete(oldest);
+  }
+  searchCache.set(key, { expires: Date.now() + CACHE_TTL_MS, results });
 
   return results;
 }
