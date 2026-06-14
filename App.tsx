@@ -214,7 +214,8 @@ const App: React.FC = () => {
           query,
           location,
           searchState.filters,
-          searchState.sortBy
+          searchState.sortBy,
+          searchState.userCoordinates
       );
 
       // Calculate distances if we have user coordinates

@@ -1,0 +1,81 @@
+[
+  {
+    "name": "Sunday Serenity",
+    "slug": "sunday-serenity",
+    "day": 0,
+    "time": "19:00",
+    "end_time": "20:00",
+    "timezone": "America/New_York",
+    "entity": "Online Intergroup of AA",
+    "types": ["O", "ONL", "D", "X"],
+    "conference_url": "https://zoom.us/j/123456789",
+    "conference_phone": "+1-646-558-8656,,123456789#",
+    "notes": "Newcomers welcome.",
+    "url": "https://example-intergroup.org/m/sunday-serenity"
+  },
+  {
+    "name": "Downtown Daily Reflections",
+    "slug": "downtown-mon",
+    "group": "Downtown Group",
+    "day": 1,
+    "time": "12:15",
+    "address": "100 Main St",
+    "city": "Austin",
+    "state": "TX",
+    "postal_code": "78701",
+    "latitude": 30.2672,
+    "longitude": -97.7431,
+    "types": ["C", "BB"],
+    "entity": "Austin Intergroup",
+    "url": "https://aaaustin.org/m/downtown-mon"
+  },
+  {
+    "name": "Downtown Daily Reflections",
+    "slug": "downtown-wed",
+    "group": "Downtown Group",
+    "day": 3,
+    "time": "12:15",
+    "end_time": "13:15",
+    "address": "100 Main St",
+    "city": "Austin",
+    "state": "TX",
+    "postal_code": "78701",
+    "latitude": 30.2672,
+    "longitude": -97.7431,
+    "types": ["O", "D"],
+    "entity": "Austin Intergroup",
+    "url": "https://aaaustin.org/m/downtown-wed"
+  },
+  {
+    "name": "Far Away Group",
+    "slug": "far-away",
+    "day": 2,
+    "time": "18:30",
+    "address": "1 Pier",
+    "city": "Seattle",
+    "state": "WA",
+    "latitude": 47.6062,
+    "longitude": -122.3321,
+    "types": ["O"],
+    "entity": "Seattle Intergroup"
+  },
+  {
+    "name": "By Appointment Only",
+    "slug": "no-time",
+    "types": ["O"],
+    "entity": "Some Intergroup"
+  },
+  {
+    "name": "Multi-day Women's Meeting",
+    "slug": "womens-multi",
+    "day": [2, 4],
+    "time": "10:00",
+    "address": "200 Oak Ave",
+    "city": "Austin",
+    "state": "TX",
+    "latitude": 30.30,
+    "longitude": -97.74,
+    "types": ["W", "C"],
+    "entity": "Austin Intergroup"
+  }
+]

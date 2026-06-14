@@ -3,10 +3,12 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { performSearch, validateParams } from './lib/searchCore';
+import { fetchMeetings, parseFeedList } from './lib/meetingsCore';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     const SERPER_API_KEY = env.SERPER_API_KEY || '';
+    const MEETING_GUIDE_FEEDS = parseFeedList(env.MEETING_GUIDE_FEEDS);
 
     return {
       server: {
@@ -137,6 +139,46 @@ export default defineConfig(({ mode }) => {
                 console.error('API search error:', error);
                 res.statusCode = 500;
                 res.end(JSON.stringify({ error: error.message, results: [] }));
+              }
+            });
+          }
+        },
+        // Dev-only middleware mirroring the Vercel function (api/meetings.ts)
+        {
+          name: 'api-meetings-handler',
+          configureServer(server) {
+            server.middlewares.use('/api/meetings', async (req, res) => {
+              res.setHeader('Content-Type', 'application/json');
+
+              if (req.method !== 'POST') {
+                res.statusCode = 405;
+                res.end(JSON.stringify({ error: 'Method not allowed' }));
+                return;
+              }
+
+              if (MEETING_GUIDE_FEEDS.length === 0) {
+                res.end(JSON.stringify({ meetings: [] }));
+                return;
+              }
+
+              let body = '';
+              for await (const chunk of req) {
+                body += chunk;
+              }
+
+              try {
+                const parsed = body ? JSON.parse(body) : {};
+                const meetings = await fetchMeetings({
+                  meetingType: typeof parsed.meetingType === 'string' ? parsed.meetingType : undefined,
+                  latitude: typeof parsed.latitude === 'number' ? parsed.latitude : undefined,
+                  longitude: typeof parsed.longitude === 'number' ? parsed.longitude : undefined,
+                  location: typeof parsed.location === 'string' ? parsed.location : undefined
+                }, MEETING_GUIDE_FEEDS);
+                res.end(JSON.stringify({ meetings }));
+              } catch (error: any) {
+                console.error('API meetings error:', error);
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: error.message, meetings: [] }));
               }
             });
           }

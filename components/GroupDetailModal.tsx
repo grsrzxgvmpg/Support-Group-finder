@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SupportGroup } from '../types';
-import { X, MapPin, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag, ChevronDown } from 'lucide-react';
+import { X, MapPin, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag, ChevronDown, CalendarCheck, CalendarPlus, Video } from 'lucide-react';
 import { useToast } from './Toast';
 import { shareContent } from '../services/platform';
+import { sessionLabel, sortSessions } from '../lib/meetingFormat';
+import { buildNextOccurrenceICS, nextOccurrence, nextOccurrenceLabel } from '../lib/ics';
 
 interface GroupDetailModalProps {
   group: SupportGroup;
@@ -105,6 +107,42 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
     e.stopPropagation();
   };
 
+  // Structured schedule helpers (present only for verified meetings)
+  const sessions = group.meetingSchedule ? sortSessions(group.meetingSchedule) : [];
+  const upcoming = sessions.length ? nextOccurrence(sessions, new Date(), group.timezone) : null;
+
+  const handleAddToCalendar = () => {
+    const ics = buildNextOccurrenceICS({
+      name: group.name,
+      meetingSchedule: group.meetingSchedule,
+      timezone: group.timezone,
+      address: getFullAddress(),
+      conferenceUrl: group.conferenceUrl,
+      conferencePhone: group.conferencePhone,
+      meetingTypes: group.meetingTypes,
+      url: group.url,
+      group: group.name
+    });
+    if (!ics) {
+      showToast('No upcoming meeting time to add', 'error');
+      return;
+    }
+    try {
+      const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${group.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}.ics`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast('Calendar event downloaded', 'success');
+    } catch {
+      showToast('Could not create calendar event', 'error');
+    }
+  };
+
   return (
     <div
       role="dialog"
@@ -183,6 +221,48 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
               {group.description}
             </p>
           </div>
+
+          {/* Verified meeting schedule (12-step / Meeting Guide feeds) */}
+          {group.isVerifiedSchedule && sessions.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <CalendarCheck size={16} className="text-green-600" aria-hidden="true" />
+                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Meeting Schedule</h3>
+              </div>
+              {upcoming && (
+                <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-xl text-sm">
+                  <span className="font-semibold text-green-900">Next meeting: </span>
+                  <span className="text-green-800">{nextOccurrenceLabel(upcoming, group.timezone)}</span>
+                  {group.timezone && <span className="text-green-700/70 text-xs"> ({group.timezone})</span>}
+                </div>
+              )}
+              <div className="bg-gray-50 rounded-xl border border-gray-100 divide-y divide-gray-100">
+                {sessions.map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 p-3">
+                    <Clock size={16} className="text-teal-600 shrink-0" aria-hidden="true" />
+                    <span className="text-gray-900 font-medium text-sm">{sessionLabel(s, { long: true })}</span>
+                  </div>
+                ))}
+              </div>
+              {group.meetingTypes && group.meetingTypes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {group.meetingTypes.map(label => (
+                    <span key={label} className="inline-flex items-center px-2.5 py-1 rounded-full bg-teal-50 text-teal-700 text-xs font-medium">
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleAddToCalendar}
+                className="mt-3 w-full py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center bg-white border border-teal-200 text-teal-700 hover:bg-teal-50 transition-colors"
+              >
+                <CalendarPlus size={16} className="mr-2" aria-hidden="true" />
+                Add next meeting to calendar
+              </button>
+            </div>
+          )}
 
           {/* Contact Information - Key Section */}
           <div className="mb-6">
@@ -378,8 +458,21 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
 
         {/* Footer Actions */}
         <div className="p-4 sm:p-6 border-t border-gray-100 bg-white shrink-0">
+          {/* Join online meeting - prominent for virtual meetings */}
+          {group.conferenceUrl && (
+            <a
+              href={group.conferenceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mb-3 w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center bg-purple-600 text-white hover:bg-purple-700 shadow-lg shadow-purple-200 transition-all active:scale-[0.98]"
+            >
+              <Video size={18} className="mr-2" />
+              Join Online Meeting
+            </a>
+          )}
+
           <div className="flex gap-3 mb-3">
-            {group.url && (
+            {group.url && group.url !== group.conferenceUrl && (
               <a
                 href={group.url}
                 target="_blank"

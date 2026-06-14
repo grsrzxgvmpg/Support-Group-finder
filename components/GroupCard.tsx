@@ -1,8 +1,9 @@
 import React from 'react';
 import { SupportGroup } from '../types';
-import { MapPin, Globe, Search, Phone, Share2, Building2, Clock, Heart, Navigation } from 'lucide-react';
+import { MapPin, Globe, Search, Phone, Share2, Building2, Clock, Heart, Navigation, CalendarCheck } from 'lucide-react';
 import { useToast } from './Toast';
 import { shareContent } from '../services/platform';
+import { sessionLabel, sortSessions } from '../lib/meetingFormat';
 
 interface GroupCardProps {
   group: SupportGroup;
@@ -80,7 +81,9 @@ const GroupCardComponent: React.FC<GroupCardProps> = ({ group, onClick, isSaved 
   // Collect all applicable badges with priority ordering
   const allBadges: { label: string; bg: string; text: string }[] = [];
 
-  if (group.isNationalResource) {
+  if (group.isVerifiedSchedule) {
+    allBadges.push({ label: '✓ Verified schedule', bg: 'bg-green-50', text: 'text-green-700' });
+  } else if (group.isNationalResource) {
     allBadges.push({ label: 'National resource', bg: 'bg-blue-50', text: 'text-blue-700' });
   } else if (isTrustedOrg) {
     allBadges.push({ label: '✓ Verified', bg: 'bg-blue-50', text: 'text-blue-700' });
@@ -208,11 +211,32 @@ const GroupCardComponent: React.FC<GroupCardProps> = ({ group, onClick, isSaved 
           </div>
         )}
 
-        {/* Schedule */}
-        {group.schedule && (
+        {/* Verified meeting schedule (structured day/time) */}
+        {group.isVerifiedSchedule && group.meetingSchedule && group.meetingSchedule.length > 0 ? (
+          <div className="flex items-start text-gray-700 text-sm">
+            <CalendarCheck size={15} className="mr-2.5 text-green-600 shrink-0 mt-0.5" aria-hidden="true" />
+            <span className="font-medium">
+              {sortSessions(group.meetingSchedule).slice(0, 3).map(s => sessionLabel(s)).join('  ·  ')}
+              {group.meetingSchedule.length > 3 && (
+                <span className="text-gray-400"> +{group.meetingSchedule.length - 3} more</span>
+              )}
+            </span>
+          </div>
+        ) : group.schedule && (
           <div className="flex items-center text-gray-600 text-sm">
             <Clock size={15} className="mr-2.5 text-teal-600 shrink-0" aria-hidden="true" />
             <span className="font-medium">{group.schedule}</span>
+          </div>
+        )}
+
+        {/* Meeting type chips (Open / Online / Wheelchair / Newcomer-friendly...) */}
+        {group.meetingTypes && group.meetingTypes.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {group.meetingTypes.slice(0, 3).map(label => (
+              <span key={label} className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 text-[11px] font-medium">
+                {label}
+              </span>
+            ))}
           </div>
         )}
 

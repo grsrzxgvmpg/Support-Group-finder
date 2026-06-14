@@ -1,3 +1,10 @@
+// A single recurring weekly meeting occurrence (day-of-week + time).
+export interface MeetingSession {
+  day: number;        // 0 = Sunday ... 6 = Saturday
+  time: string;       // "HH:MM" 24-hour
+  endTime?: string;   // "HH:MM" 24-hour, optional
+}
+
 export interface SupportGroup {
   id: string;
   name: string;
@@ -23,6 +30,14 @@ export interface SupportGroup {
   meetingDays?: string[];
   meetingTime?: string;
   nextMeeting?: string;
+
+  // Structured recurring schedule from Meeting Guide feeds (12-step etc.)
+  meetingSchedule?: MeetingSession[]; // recurring weekly sessions with real day/time
+  meetingTypes?: string[];            // human-readable type labels (Open, Online, Wheelchair, ...)
+  conferenceUrl?: string;             // direct online-meeting link (Zoom, etc.)
+  conferencePhone?: string;           // dial-in number for the online meeting
+  timezone?: string;                  // IANA tz of the meeting times, when known
+  isVerifiedSchedule?: boolean;       // true => day/time came from a structured feed
 
   // Metadata
   url?: string;               // Source URL found by search

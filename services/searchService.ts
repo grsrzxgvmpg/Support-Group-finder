@@ -1,4 +1,5 @@
-import { SupportGroup, SearchFilters, SortOption, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter } from "../types";
+import { SupportGroup, SearchFilters, SortOption, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter, UserCoordinates } from "../types";
+import { sessionLabel, sortSessions } from "../lib/meetingFormat";
 
 // Deterministic ID derived from the group's identity so the same group
 // found in different searches gets the same ID. This keeps the saved/heart
@@ -83,6 +84,15 @@ export function isCrisisQuery(topic: string): boolean {
 // time. Without it, native builds fall back to the curated resources below.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 const API_URL = `${API_BASE}/api/search`;
+const MEETINGS_API_URL = `${API_BASE}/api/meetings`;
+
+// Recovery / 12-step topics are the ones Meeting Guide feeds cover, so we
+// only query real meeting schedules for those searches.
+const RECOVERY_PATTERN = /\b(addict\w*|alcohol\w*|drink\w*|substance|recover\w*|sober|sobriety|narcotic|al-?anon|gambl\w*|opioid|heroin|cocaine|fentanyl|\bdrugs?\b|\baa\b|\bna\b|12.?step)\b/i;
+
+export function isRecoveryTopic(topic: string): boolean {
+  return RECOVERY_PATTERN.test(topic);
+}
 
 // Curated fallback resources
 const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
@@ -336,6 +346,80 @@ async function searchViaAPI(
   });
 }
 
+// Convert a normalized meeting (from /api/meetings) into a SupportGroup so
+// it flows through the same distance/sort/save/pagination pipeline.
+function meetingToGroup(m: any, topic: string): SupportGroup {
+  const sessions = sortSessions(Array.isArray(m.sessions) ? m.sessions : []);
+  const scheduleStr = sessions.map((s: any) => sessionLabel(s)).join(' · ');
+  const labels: string[] = Array.isArray(m.typeLabels) ? m.typeLabels : [];
+
+  const descriptionParts = [
+    m.group && m.group !== m.name ? m.group : '',
+    labels.length ? labels.join(' · ') : '',
+    m.notes || ''
+  ].filter(Boolean);
+
+  const group: SupportGroup = {
+    id: stableGroupId({ name: m.name, address: m.address, url: m.conferenceUrl || m.url, location: m.location }),
+    name: m.name,
+    description: descriptionParts.join(' — ') || 'Recovery meeting',
+    topic,
+    location: m.isOnline ? 'Online' : (m.city ? `${m.city}${m.state ? ', ' + m.state : ''}` : (m.location || 'In person')),
+    address: m.address,
+    city: m.city,
+    state: m.state,
+    zipCode: m.postalCode,
+    latitude: m.latitude,
+    longitude: m.longitude,
+    phoneNumber: m.conferencePhone || undefined,
+    website: m.url,
+    url: m.conferenceUrl || m.url,
+    schedule: scheduleStr || undefined,
+    meetingSchedule: sessions,
+    meetingTypes: labels,
+    conferenceUrl: m.conferenceUrl || undefined,
+    conferencePhone: m.conferencePhone || undefined,
+    timezone: m.timezone || undefined,
+    isVerifiedSchedule: true,
+    isOnline: Boolean(m.isOnline),
+    isFree: true,
+    isGroup: true,
+    isPeerLed: true,
+    sourceName: m.source || 'Meeting Guide',
+    groupType: '12-Step',
+    distanceMiles: typeof m.distanceMiles === 'number' ? m.distanceMiles : undefined
+  };
+
+  return { ...group, completenessScore: calculateCompletenessScore(group) };
+}
+
+// Fetch real meeting schedules from the Meeting Guide proxy. Returns [] on
+// any failure or when no feeds are configured server-side - never throws,
+// so it can't break the primary search.
+async function fetchMeetingsViaAPI(
+  location: string,
+  filters: SearchFilters,
+  userCoordinates: UserCoordinates | null
+): Promise<SupportGroup[]> {
+  try {
+    const response = await fetch(MEETINGS_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location,
+        meetingType: filters.meetingType,
+        latitude: userCoordinates?.latitude,
+        longitude: userCoordinates?.longitude
+      })
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return (data.meetings || []).map((m: any) => meetingToGroup(m, ''));
+  } catch {
+    return [];
+  }
+}
+
 // Build a descriptive search query based on filters
 function buildFilteredSearchQuery(topic: string, location: string, filters: SearchFilters): string {
   const parts = [topic];
@@ -385,22 +469,33 @@ export const searchSupportGroups = async (
   topic: string,
   location: string,
   filters: SearchFilters,
-  sortBy: SortOption
+  sortBy: SortOption,
+  userCoordinates: UserCoordinates | null = null
 ): Promise<SupportGroup[]> => {
   // Search with the normalized term ("panic attacks" -> "anxiety") while
   // keeping the user's original wording for everything they see
   const searchTopic = normalizeTopicForSearch(topic);
 
-  let results: SupportGroup[] = [];
-  let apiResultCount = 0;
+  // For recovery/12-step topics, fetch real meeting schedules in parallel
+  // with the main search (no-op when no feeds are configured server-side)
+  const wantMeetings = isRecoveryTopic(searchTopic) && filters.sessionType !== SessionType.INDIVIDUAL;
 
-  try {
-    results = await searchViaAPI(searchTopic, location, filters);
-    apiResultCount = results.length;
-  } catch (error) {
-    console.error('API search error:', error);
-    // API not available or failed - use fallback
+  const [apiSettled, meetingsSettled] = await Promise.allSettled([
+    searchViaAPI(searchTopic, location, filters),
+    wantMeetings ? fetchMeetingsViaAPI(location, filters, userCoordinates) : Promise.resolve([] as SupportGroup[])
+  ]);
+
+  let results: SupportGroup[] = [];
+  if (apiSettled.status === 'fulfilled') {
+    results = apiSettled.value;
+  } else {
+    console.error('API search error:', apiSettled.reason);
   }
+  const meetingResults = meetingsSettled.status === 'fulfilled' ? meetingsSettled.value : [];
+
+  // Real meetings lead the list - they're the most actionable (verified day/time)
+  results = [...meetingResults, ...results];
+  const apiResultCount = results.length;
 
   // Results display the user's original topic
   results = results.map(r => ({ ...r, topic }));
@@ -473,27 +568,36 @@ export const searchSupportGroups = async (
   const seen = new Set<string>();
   results = results.filter(r => {
     const nameLower = r.name.toLowerCase();
+    // Distinct meetings can share a name across locations, so key real
+    // meetings by name + place rather than name alone
+    const dedupeKey = r.isVerifiedSchedule
+      ? `${nameLower}|${(r.address || r.conferenceUrl || r.location || '').toLowerCase()}`
+      : nameLower;
 
-    // Check exact match
-    if (seen.has(nameLower)) return false;
+    if (seen.has(dedupeKey)) return false;
 
-    // Check if this is a known organization in different format
-    const isKnownOrg = KNOWN_ORGS.some(org => nameLower.includes(org) || org.includes(nameLower.split(' ')[0]));
-    if (isKnownOrg) {
-      for (const existingKey of seen) {
-        if (KNOWN_ORGS.some(org => existingKey.includes(org) && nameLower.includes(org))) {
-          return false; // Duplicate of known org in different format
+    // Collapse known national organizations that appear in different formats
+    if (!r.isVerifiedSchedule) {
+      const isKnownOrg = KNOWN_ORGS.some(org => nameLower.includes(org) || org.includes(nameLower.split(' ')[0]));
+      if (isKnownOrg) {
+        for (const existingKey of seen) {
+          if (KNOWN_ORGS.some(org => existingKey.includes(org) && nameLower.includes(org))) {
+            return false; // Duplicate of known org in different format
+          }
         }
       }
     }
 
-    seen.add(nameLower);
+    seen.add(dedupeKey);
     return true;
   });
 
-  // Sort
+  // Sort - verified meeting schedules rank highest (most actionable)
   if (sortBy === SortOption.NEAREST) {
     results.sort((a, b) => {
+      const aSched = a.isVerifiedSchedule ? 1 : 0;
+      const bSched = b.isVerifiedSchedule ? 1 : 0;
+      if (bSched !== aSched) return bSched - aSched;
       const aHasAddress = a.address ? 1 : 0;
       const bHasAddress = b.address ? 1 : 0;
       if (bHasAddress !== aHasAddress) return bHasAddress - aHasAddress;
@@ -501,8 +605,8 @@ export const searchSupportGroups = async (
     });
   } else {
     results.sort((a, b) => {
-      const aScore = (a.phoneNumber ? 2 : 0) + (a.address ? 2 : 0) + (a.rating ? 1 : 0);
-      const bScore = (b.phoneNumber ? 2 : 0) + (b.address ? 2 : 0) + (b.rating ? 1 : 0);
+      const aScore = (a.isVerifiedSchedule ? 4 : 0) + (a.phoneNumber ? 2 : 0) + (a.address ? 2 : 0) + (a.rating ? 1 : 0);
+      const bScore = (b.isVerifiedSchedule ? 4 : 0) + (b.phoneNumber ? 2 : 0) + (b.address ? 2 : 0) + (b.rating ? 1 : 0);
       if (bScore !== aScore) return bScore - aScore;
       return (b.rating || 0) - (a.rating || 0);
     });
