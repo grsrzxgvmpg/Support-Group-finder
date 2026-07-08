@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle, XCircle, AlertCircle, X } from 'lucide-react';
 
 export type ToastType = 'success' | 'error' | 'info';
@@ -12,15 +12,17 @@ interface ToastProps {
 
 export const Toast: React.FC<ToastProps> = ({ message, type, onClose, duration = 3000 }) => {
   const [isVisible, setIsVisible] = useState(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     setIsVisible(true);
     const timer = setTimeout(() => {
       setIsVisible(false);
-      setTimeout(onClose, 300);
+      setTimeout(() => onCloseRef.current(), 300);
     }, duration);
     return () => clearTimeout(timer);
-  }, [duration, onClose]);
+  }, [duration]);
 
   const icons = {
     success: <CheckCircle size={18} className="text-green-600" />,
@@ -36,7 +38,8 @@ export const Toast: React.FC<ToastProps> = ({ message, type, onClose, duration =
 
   return (
     <div
-      className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] transition-all duration-300 ${
+      role="status"
+      className={`transition-all duration-300 ${
         isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'
       }`}
     >
@@ -44,6 +47,8 @@ export const Toast: React.FC<ToastProps> = ({ message, type, onClose, duration =
         {icons[type]}
         <span className="text-sm font-medium text-gray-800">{message}</span>
         <button
+          type="button"
+          aria-label="Dismiss notification"
           onClick={() => {
             setIsVisible(false);
             setTimeout(onClose, 300);
@@ -59,7 +64,7 @@ export const Toast: React.FC<ToastProps> = ({ message, type, onClose, duration =
 
 // Toast container and context for app-wide usage
 interface ToastItem {
-  id: string;
+  id: number;
   message: string;
   type: ToastType;
 }
@@ -72,27 +77,34 @@ export const ToastContext = React.createContext<ToastContextType | null>(null);
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const nextId = useRef(0);
 
-  const showToast = (message: string, type: ToastType = 'info') => {
-    const id = Math.random().toString(36).substr(2, 9);
+  const showToast = useCallback((message: string, type: ToastType = 'info') => {
+    const id = nextId.current++;
     setToasts(prev => [...prev, { id, message, type }]);
-  };
+  }, []);
 
-  const removeToast = (id: string) => {
+  const removeToast = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id));
-  };
+  }, []);
+
+  const contextValue = useMemo(() => ({ showToast }), [showToast]);
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
-      {toasts.map(toast => (
-        <Toast
-          key={toast.id}
-          message={toast.message}
-          type={toast.type}
-          onClose={() => removeToast(toast.id)}
-        />
-      ))}
+      {toasts.length > 0 && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center gap-2 pointer-events-none [&>*]:pointer-events-auto px-4 w-full max-w-md">
+          {toasts.map(toast => (
+            <Toast
+              key={toast.id}
+              message={toast.message}
+              type={toast.type}
+              onClose={() => removeToast(toast.id)}
+            />
+          ))}
+        </div>
+      )}
     </ToastContext.Provider>
   );
 };

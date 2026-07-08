@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+  background-color: #fafafa;
+  color: #1c1c1e;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: none;
+}
+
+/* Hide scrollbar for clean UI but allow scrolling */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* iOS-style glass morphism panel */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* iOS-style button press feedback */
+button,
+a {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Consistent focus styles for accessibility */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid #0d9488;
+  outline-offset: 2px;
+}
+
+/* Animate-in utilities */
+.animate-in {
+  animation-duration: 0.3s;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+.fade-in {
+  animation-name: fadeIn;
+}
+.slide-in-from-bottom-2 {
+  animation-name: slideInFromBottom;
+}
+.slide-in-from-bottom-10 {
+  animation-name: slideInFromBottomLarge;
+}
+.zoom-in-95 {
+  animation-name: zoomIn95;
+}
+.slide-in-from-top-2 {
+  animation-name: slideInFromTop;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes slideInFromBottom {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes slideInFromBottomLarge {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes zoomIn95 {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes slideInFromTop {
+  from {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .animate-pulse,
+  .animate-spin {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

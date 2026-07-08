@@ -1,17 +1,29 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { SupportGroup } from '../types';
-import { X, MapPin, Calendar, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag } from 'lucide-react';
+import { X, MapPin, Globe, Phone, Share2, Star, ShieldCheck, Search, Building2, Clock, Copy, Navigation, Tag, ChevronDown, CalendarCheck, CalendarPlus, Video } from 'lucide-react';
 import { useToast } from './Toast';
+import { shareContent } from '../services/platform';
+import { sessionLabel, sortSessions } from '../lib/meetingFormat';
+import { buildNextOccurrenceICS, nextOccurrence, nextOccurrenceLabel } from '../lib/ics';
 
 interface GroupDetailModalProps {
   group: SupportGroup;
   onClose: () => void;
 }
 
+const FIRST_CALL_QUESTIONS = [
+  'Are you currently meeting, and when is the next meeting?',
+  'Is the group open to newcomers? Do I need to register first?',
+  'Is there any cost to attend?',
+  'Who leads the group — peers or a professional?',
+  'Is it in person or online? Where exactly do you meet?'
+];
+
 export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClose }) => {
   const { showToast } = useToast();
   const modalRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [showCallGuide, setShowCallGuide] = useState(false);
 
   // Focus management - focus close button when modal opens
   useEffect(() => {
@@ -24,6 +36,15 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [onClose]);
+
+  // Lock background scrolling while the modal is open
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
 
   // Format full address
   const getFullAddress = () => {
@@ -49,32 +70,28 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
       group.url
     ].filter(Boolean).join('\n');
 
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: group.name,
-          text: shareText,
-          url: group.url
-        });
-      } catch (err) {
-        console.log("Error sharing", err);
-      }
-    } else {
-      navigator.clipboard.writeText(shareText);
-      showToast("Group info copied to clipboard!", "success");
+    const outcome = await shareContent({ title: group.name, text: shareText, url: group.url });
+    if (outcome === 'copied') {
+      showToast('Group info copied to clipboard!', 'success');
+    } else if (outcome === 'failed') {
+      showToast('Could not share group info', 'error');
     }
   };
 
-  const handleCopyAddress = () => {
-    const address = getFullAddress();
-    navigator.clipboard.writeText(address);
-    showToast("Address copied!", "success");
+  const copyToClipboard = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(successMessage, 'success');
+    } catch {
+      showToast('Could not copy to clipboard', 'error');
+    }
   };
+
+  const handleCopyAddress = () => copyToClipboard(getFullAddress(), 'Address copied!');
 
   const handleCopyPhone = () => {
     if (group.phoneNumber) {
-      navigator.clipboard.writeText(group.phoneNumber);
-      showToast("Phone number copied!", "success");
+      copyToClipboard(group.phoneNumber, 'Phone number copied!');
     }
   };
 
@@ -90,6 +107,42 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
     e.stopPropagation();
   };
 
+  // Structured schedule helpers (present only for verified meetings)
+  const sessions = group.meetingSchedule ? sortSessions(group.meetingSchedule) : [];
+  const upcoming = sessions.length ? nextOccurrence(sessions, new Date(), group.timezone) : null;
+
+  const handleAddToCalendar = () => {
+    const ics = buildNextOccurrenceICS({
+      name: group.name,
+      meetingSchedule: group.meetingSchedule,
+      timezone: group.timezone,
+      address: getFullAddress(),
+      conferenceUrl: group.conferenceUrl,
+      conferencePhone: group.conferencePhone,
+      meetingTypes: group.meetingTypes,
+      url: group.url,
+      group: group.name
+    });
+    if (!ics) {
+      showToast('No upcoming meeting time to add', 'error');
+      return;
+    }
+    try {
+      const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${group.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}.ics`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast('Calendar event downloaded', 'success');
+    } catch {
+      showToast('Could not create calendar event', 'error');
+    }
+  };
+
   return (
     <div
       role="dialog"
@@ -100,7 +153,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
     >
       <div
         ref={modalRef}
-        className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-300 flex flex-col max-h-[85vh]"
+        className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 flex flex-col max-h-[85vh]"
         onClick={handleModalClick}
       >
         {/* Header Section */}
@@ -117,6 +170,11 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
 
           <div className="flex flex-col gap-3">
             <div className="flex gap-2 flex-wrap">
+              {group.isNationalResource && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                  National resource
+                </span>
+              )}
               {group.sourceName && (
                 <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold uppercase tracking-wider shadow-sm">
                   {group.sourceName}
@@ -142,8 +200,14 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
               {group.name}
             </h2>
             <div className="flex items-center text-sm text-gray-500">
-              <MapPin size={16} className="text-teal-600 mr-1.5" />
+              <MapPin size={16} className="text-teal-600 mr-1.5" aria-hidden="true" />
               {group.location}
+              {group.distanceMiles !== undefined && (
+                <span className="ml-2 inline-flex items-center text-xs text-teal-700 font-semibold bg-teal-100/70 px-2 py-0.5 rounded-full">
+                  <Navigation size={11} className="mr-1" aria-hidden="true" />
+                  {group.distanceMiles < 1 ? '< 1 mi' : `${group.distanceMiles} mi`}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -157,6 +221,48 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
               {group.description}
             </p>
           </div>
+
+          {/* Verified meeting schedule (12-step / Meeting Guide feeds) */}
+          {group.isVerifiedSchedule && sessions.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <CalendarCheck size={16} className="text-green-600" aria-hidden="true" />
+                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Meeting Schedule</h3>
+              </div>
+              {upcoming && (
+                <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-xl text-sm">
+                  <span className="font-semibold text-green-900">Next meeting: </span>
+                  <span className="text-green-800">{nextOccurrenceLabel(upcoming, group.timezone)}</span>
+                  {group.timezone && <span className="text-green-700/70 text-xs"> ({group.timezone})</span>}
+                </div>
+              )}
+              <div className="bg-gray-50 rounded-xl border border-gray-100 divide-y divide-gray-100">
+                {sessions.map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 p-3">
+                    <Clock size={16} className="text-teal-600 shrink-0" aria-hidden="true" />
+                    <span className="text-gray-900 font-medium text-sm">{sessionLabel(s, { long: true })}</span>
+                  </div>
+                ))}
+              </div>
+              {group.meetingTypes && group.meetingTypes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {group.meetingTypes.map(label => (
+                    <span key={label} className="inline-flex items-center px-2.5 py-1 rounded-full bg-teal-50 text-teal-700 text-xs font-medium">
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleAddToCalendar}
+                className="mt-3 w-full py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center bg-white border border-teal-200 text-teal-700 hover:bg-teal-50 transition-colors"
+              >
+                <CalendarPlus size={16} className="mr-2" aria-hidden="true" />
+                Add next meeting to calendar
+              </button>
+            </div>
+          )}
 
           {/* Contact Information - Key Section */}
           <div className="mb-6">
@@ -261,6 +367,42 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
             </div>
           </div>
 
+          {/* First-call guide - making the call is often the hardest step */}
+          <div className="mb-6">
+            <button
+              type="button"
+              onClick={() => setShowCallGuide(open => !open)}
+              aria-expanded={showCallGuide}
+              className="w-full flex items-center justify-between p-4 bg-teal-50 border border-teal-100 rounded-xl text-left hover:bg-teal-100/60 transition-colors"
+            >
+              <span className="flex items-center gap-2.5">
+                <Phone size={16} className="text-teal-600 shrink-0" aria-hidden="true" />
+                <span className="text-sm font-bold text-teal-900">First time reaching out? What to ask</span>
+              </span>
+              <ChevronDown
+                size={16}
+                aria-hidden="true"
+                className={`text-teal-600 shrink-0 transition-transform ${showCallGuide ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {showCallGuide && (
+              <div className="mt-2 p-4 bg-white border border-teal-100 rounded-xl animate-in slide-in-from-top-2">
+                <ul className="space-y-2.5">
+                  {FIRST_CALL_QUESTIONS.map((question) => (
+                    <li key={question} className="flex items-start gap-2.5 text-sm text-gray-700">
+                      <span className="text-teal-500 font-bold mt-0.5" aria-hidden="true">•</span>
+                      {question}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500 leading-relaxed">
+                  It's okay to say <em>"this is my first time looking for a support group."</em>{' '}
+                  Organizers expect first-time callers and are glad you reached out.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Info Grid */}
           <div className="grid grid-cols-2 gap-3 mb-6">
             <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
@@ -316,8 +458,21 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
 
         {/* Footer Actions */}
         <div className="p-4 sm:p-6 border-t border-gray-100 bg-white shrink-0">
+          {/* Join online meeting - prominent for virtual meetings */}
+          {group.conferenceUrl && (
+            <a
+              href={group.conferenceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mb-3 w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center bg-purple-600 text-white hover:bg-purple-700 shadow-lg shadow-purple-200 transition-all active:scale-[0.98]"
+            >
+              <Video size={18} className="mr-2" />
+              Join Online Meeting
+            </a>
+          )}
+
           <div className="flex gap-3 mb-3">
-            {group.url && (
+            {group.url && group.url !== group.conferenceUrl && (
               <a
                 href={group.url}
                 target="_blank"

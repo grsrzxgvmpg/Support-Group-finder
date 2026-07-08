@@ -1,6 +1,17 @@
-import { SupportGroup, SearchFilters, SortOption, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter } from "../types";
+import { SupportGroup, SearchFilters, SortOption, MeetingType, SessionType, LeadershipType, AgeGroup, DistanceFilter, UserCoordinates } from "../types";
+import { sessionLabel, sortSessions } from "../lib/meetingFormat";
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+// Deterministic ID derived from the group's identity so the same group
+// found in different searches gets the same ID. This keeps the saved/heart
+// state consistent across sessions and prevents duplicate saves.
+const stableGroupId = (group: { name: string; address?: string; location?: string; url?: string }): string => {
+  const key = `${group.name}|${group.address || group.location || ''}|${group.url || ''}`.toLowerCase();
+  let hash = 5381;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) + hash + key.charCodeAt(i)) | 0;
+  }
+  return `g${(hash >>> 0).toString(36)}`;
+};
 
 // Calculate completeness score based on available fields
 function calculateCompletenessScore(group: Partial<SupportGroup>): number {
@@ -28,8 +39,60 @@ function calculateCompletenessScore(group: Partial<SupportGroup>): number {
   return Math.round((score / maxScore) * 100);
 }
 
-// API endpoint - uses serverless function in production
-const API_URL = '/api/search';
+// People describe what they need in everyday words ("panic attacks",
+// "drinking problem", "lost my husband"). Map common lay phrasing onto
+// terms that actually return good search results. First match wins; the
+// user's original wording is preserved for display.
+const TOPIC_SYNONYMS: { pattern: RegExp; term: string }[] = [
+  { pattern: /\bsuicid\w*\b/i, term: 'suicide prevention' },
+  { pattern: /\bpanic( attacks?)?\b|\bsocial anxiety\b|\bworr(y|ied|ying)\b/i, term: 'anxiety' },
+  { pattern: /\b(sad|sadness|feeling down|hopeless(ness)?|depress\w*)\b/i, term: 'depression' },
+  { pattern: /\b(widowe?d?r?|bereave(d|ment)|lost (my|a) \w+|loss of)\b/i, term: 'grief' },
+  { pattern: /\b(drink(ing)?( problem)?|alcohol(ism|ic)?s?)\b/i, term: 'alcohol addiction' },
+  { pattern: /\b(drugs?|substance (ab)?use|opioids?|heroin|meth|fentanyl|narcotics?)\b/i, term: 'addiction' },
+  { pattern: /\bgambling\b/i, term: 'gambling addiction' },
+  { pattern: /\b(anorexi[ac]|bulimi[ac]|binge eating|overeat(ing|er)s?)\b/i, term: 'eating disorders' },
+  { pattern: /\b(gay|lesbian|bisexual|trans(gender)?|queer|non-?binary)\b/i, term: 'LGBTQ+' },
+  { pattern: /\b(veterans?|combat|military)\b/i, term: 'veterans PTSD' },
+  { pattern: /\b(trauma(tized)?|abuse(d)? survivor)\b/i, term: 'trauma' },
+  { pattern: /\bcaregiv(er|ing)s?\b/i, term: 'caregiver support' }
+];
+
+// Translate a lay search phrase into an effective search term.
+// Returns the original topic when no mapping applies.
+export function normalizeTopicForSearch(topic: string): string {
+  const trimmed = topic.trim();
+  for (const { pattern, term } of TOPIC_SYNONYMS) {
+    if (pattern.test(trimmed) && trimmed.toLowerCase() !== term.toLowerCase()) {
+      return term;
+    }
+  }
+  return trimmed;
+}
+
+// Detect searches that suggest the user may be in crisis so the UI can
+// surface the 988 lifeline alongside results.
+const CRISIS_PATTERN = /\b(suicid\w*|kill (myself|themselves)|end (my|their) life|self[- ]?harm|hurt (myself|themselves)|don'?t want to (live|be here))\b/i;
+
+export function isCrisisQuery(topic: string): boolean {
+  return CRISIS_PATTERN.test(topic);
+}
+
+// API endpoint - a same-origin serverless function on the web. Native
+// (Capacitor) builds have no same-origin server, so VITE_API_BASE_URL must
+// point at the deployed backend (e.g. https://your-app.vercel.app) at build
+// time. Without it, native builds fall back to the curated resources below.
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const API_URL = `${API_BASE}/api/search`;
+const MEETINGS_API_URL = `${API_BASE}/api/meetings`;
+
+// Recovery / 12-step topics are the ones Meeting Guide feeds cover, so we
+// only query real meeting schedules for those searches.
+const RECOVERY_PATTERN = /\b(addict\w*|alcohol\w*|drink\w*|substance|recover\w*|sober|sobriety|narcotic|al-?anon|gambl\w*|opioid|heroin|cocaine|fentanyl|\bdrugs?\b|\baa\b|\bna\b|12.?step)\b/i;
+
+export function isRecoveryTopic(topic: string): boolean {
+  return RECOVERY_PATTERN.test(topic);
+}
 
 // Curated fallback resources
 const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
@@ -48,8 +111,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.8,
-    reviewCount: 2847,
+    isNationalResource: true,
     groupType: "Peer Support"
   },
   {
@@ -67,8 +129,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.7,
-    reviewCount: 892,
+    isNationalResource: true,
     groupType: "Peer Support"
   },
   {
@@ -85,8 +146,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: false,
     isGroup: true,
     isPeerLed: false,
-    rating: 4.6,
-    reviewCount: 1523,
+    isNationalResource: true,
     groupType: "Therapy Group"
   },
   {
@@ -103,8 +163,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.3,
-    reviewCount: 4521,
+    isNationalResource: true,
     groupType: "Peer Support"
   },
   {
@@ -121,8 +180,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: false,
-    rating: 4.4,
-    reviewCount: 1205,
+    isNationalResource: true,
     groupType: "Referral Service"
   },
   {
@@ -139,8 +197,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.9,
-    reviewCount: 5623,
+    isNationalResource: true,
     groupType: "12-Step"
   },
   {
@@ -157,8 +214,7 @@ const FALLBACK_RESOURCES: Omit<SupportGroup, 'id' | 'topic'>[] = [
     isFree: true,
     isGroup: true,
     isPeerLed: true,
-    rating: 4.5,
-    reviewCount: 634,
+    isNationalResource: true,
     groupType: "Peer Support"
   }
 ];
@@ -199,8 +255,9 @@ function applyFilters(results: SupportGroup[], filters: SearchFilters): SupportG
   return filtered;
 }
 
-// Get fallback results
-function getFallbackResults(topic: string, location: string, filters: SearchFilters): SupportGroup[] {
+// Get fallback results. `topic` is the user's original wording (kept for
+// display); `searchTopic` is the normalized term used in search URLs.
+function getFallbackResults(topic: string, location: string, filters: SearchFilters, searchTopic: string = topic): SupportGroup[] {
   let resources = [...FALLBACK_RESOURCES];
 
   // Apply all filters
@@ -211,20 +268,19 @@ function getFallbackResults(topic: string, location: string, filters: SearchFilt
     name: `Find ${topic} Groups in ${location}`,
     description: `Search Google for current ${topic.toLowerCase()} support groups with addresses, phone numbers, and meeting times near ${location}.`,
     location: location,
-    website: `https://www.google.com/search?q=${encodeURIComponent(`${topic} support group ${location} address phone`)}`,
-    url: `https://www.google.com/search?q=${encodeURIComponent(`${topic} support group ${location} address phone`)}`,
+    website: `https://www.google.com/search?q=${encodeURIComponent(`${searchTopic} support group ${location} address phone`)}`,
+    url: `https://www.google.com/search?q=${encodeURIComponent(`${searchTopic} support group ${location} address phone`)}`,
     schedule: "Live search results",
     sourceName: "Google",
     isFallbackUrl: true,
     isOnline: false,
     isGroup: true,
-    rating: 5.0,
     groupType: "Search"
   });
 
   return resources.map(r => ({
     ...r,
-    id: generateId(),
+    id: stableGroupId(r),
     topic,
     completenessScore: calculateCompletenessScore(r)
   }));
@@ -257,7 +313,7 @@ async function searchViaAPI(
 
   return (data.results || []).map((result: any) => {
     const group = {
-      id: generateId(),
+      id: stableGroupId(result),
       name: result.name,
       description: result.description,
       topic,
@@ -288,6 +344,80 @@ async function searchViaAPI(
       completenessScore: calculateCompletenessScore(group)
     };
   });
+}
+
+// Convert a normalized meeting (from /api/meetings) into a SupportGroup so
+// it flows through the same distance/sort/save/pagination pipeline.
+function meetingToGroup(m: any, topic: string): SupportGroup {
+  const sessions = sortSessions(Array.isArray(m.sessions) ? m.sessions : []);
+  const scheduleStr = sessions.map((s: any) => sessionLabel(s)).join(' · ');
+  const labels: string[] = Array.isArray(m.typeLabels) ? m.typeLabels : [];
+
+  const descriptionParts = [
+    m.group && m.group !== m.name ? m.group : '',
+    labels.length ? labels.join(' · ') : '',
+    m.notes || ''
+  ].filter(Boolean);
+
+  const group: SupportGroup = {
+    id: stableGroupId({ name: m.name, address: m.address, url: m.conferenceUrl || m.url, location: m.location }),
+    name: m.name,
+    description: descriptionParts.join(' — ') || 'Recovery meeting',
+    topic,
+    location: m.isOnline ? 'Online' : (m.city ? `${m.city}${m.state ? ', ' + m.state : ''}` : (m.location || 'In person')),
+    address: m.address,
+    city: m.city,
+    state: m.state,
+    zipCode: m.postalCode,
+    latitude: m.latitude,
+    longitude: m.longitude,
+    phoneNumber: m.conferencePhone || undefined,
+    website: m.url,
+    url: m.conferenceUrl || m.url,
+    schedule: scheduleStr || undefined,
+    meetingSchedule: sessions,
+    meetingTypes: labels,
+    conferenceUrl: m.conferenceUrl || undefined,
+    conferencePhone: m.conferencePhone || undefined,
+    timezone: m.timezone || undefined,
+    isVerifiedSchedule: true,
+    isOnline: Boolean(m.isOnline),
+    isFree: true,
+    isGroup: true,
+    isPeerLed: true,
+    sourceName: m.source || 'Meeting Guide',
+    groupType: '12-Step',
+    distanceMiles: typeof m.distanceMiles === 'number' ? m.distanceMiles : undefined
+  };
+
+  return { ...group, completenessScore: calculateCompletenessScore(group) };
+}
+
+// Fetch real meeting schedules from the Meeting Guide proxy. Returns [] on
+// any failure or when no feeds are configured server-side - never throws,
+// so it can't break the primary search.
+async function fetchMeetingsViaAPI(
+  location: string,
+  filters: SearchFilters,
+  userCoordinates: UserCoordinates | null
+): Promise<SupportGroup[]> {
+  try {
+    const response = await fetch(MEETINGS_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location,
+        meetingType: filters.meetingType,
+        latitude: userCoordinates?.latitude,
+        longitude: userCoordinates?.longitude
+      })
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return (data.meetings || []).map((m: any) => meetingToGroup(m, ''));
+  } catch {
+    return [];
+  }
 }
 
 // Build a descriptive search query based on filters
@@ -339,18 +469,36 @@ export const searchSupportGroups = async (
   topic: string,
   location: string,
   filters: SearchFilters,
-  sortBy: SortOption
+  sortBy: SortOption,
+  userCoordinates: UserCoordinates | null = null
 ): Promise<SupportGroup[]> => {
-  let results: SupportGroup[] = [];
-  let apiResultCount = 0;
+  // Search with the normalized term ("panic attacks" -> "anxiety") while
+  // keeping the user's original wording for everything they see
+  const searchTopic = normalizeTopicForSearch(topic);
 
-  try {
-    results = await searchViaAPI(topic, location, filters);
-    apiResultCount = results.length;
-  } catch (error) {
-    console.error('API search error:', error);
-    // API not available or failed - use fallback
+  // For recovery/12-step topics, fetch real meeting schedules in parallel
+  // with the main search (no-op when no feeds are configured server-side)
+  const wantMeetings = isRecoveryTopic(searchTopic) && filters.sessionType !== SessionType.INDIVIDUAL;
+
+  const [apiSettled, meetingsSettled] = await Promise.allSettled([
+    searchViaAPI(searchTopic, location, filters),
+    wantMeetings ? fetchMeetingsViaAPI(location, filters, userCoordinates) : Promise.resolve([] as SupportGroup[])
+  ]);
+
+  let results: SupportGroup[] = [];
+  if (apiSettled.status === 'fulfilled') {
+    results = apiSettled.value;
+  } else {
+    console.error('API search error:', apiSettled.reason);
   }
+  const meetingResults = meetingsSettled.status === 'fulfilled' ? meetingsSettled.value : [];
+
+  // Real meetings lead the list - they're the most actionable (verified day/time)
+  results = [...meetingResults, ...results];
+  const apiResultCount = results.length;
+
+  // Results display the user's original topic
+  results = results.map(r => ({ ...r, topic }));
 
   // Apply client-side filters for additional precision
   const filteredResults = applyFilters(results, filters);
@@ -361,7 +509,7 @@ export const searchSupportGroups = async (
 
   if (filtersEliminatedResults && filtersActive) {
     // Filters were too restrictive - create a targeted Google search
-    const searchQuery = buildFilteredSearchQuery(topic, location, filters);
+    const searchQuery = buildFilteredSearchQuery(searchTopic, location, filters);
     // Build filter description
     const activeFilters = [];
     if (filters.meetingType !== MeetingType.ALL) activeFilters.push(`${filters.meetingType.toLowerCase()}`);
@@ -373,7 +521,7 @@ export const searchSupportGroups = async (
     const filterText = activeFilters.length > 0 ? `for ${activeFilters.join(', ')} ` : '';
 
     const noMatchResult: SupportGroup = {
-      id: generateId(),
+      id: stableGroupId({ name: `search-${topic}`, location, url: searchQuery }),
       name: `Search for specific ${topic} resources`,
       description: `No exact matches found ${filterText}in your area. Try widening your filters or click to search Google for more options.`,
       topic,
@@ -390,7 +538,7 @@ export const searchSupportGroups = async (
     };
 
     // Get matching fallbacks only
-    const matchingFallbacks = getFallbackResults(topic, location, filters).filter(r => r.sourceName !== 'Google');
+    const matchingFallbacks = getFallbackResults(topic, location, filters, searchTopic).filter(r => r.sourceName !== 'Google');
 
     if (matchingFallbacks.length > 0) {
       // We have some matching national resources
@@ -405,10 +553,10 @@ export const searchSupportGroups = async (
 
   // If no results at all, use fallback
   if (results.length === 0) {
-    results = getFallbackResults(topic, location, filters);
+    results = getFallbackResults(topic, location, filters, searchTopic);
   } else {
     // Append matching fallback resources for comprehensiveness
-    const fallbacks = getFallbackResults(topic, location, filters)
+    const fallbacks = getFallbackResults(topic, location, filters, searchTopic)
       .filter(r => r.sourceName !== 'Google')
       .slice(0, 3);
     results = [...results, ...fallbacks];
@@ -420,27 +568,36 @@ export const searchSupportGroups = async (
   const seen = new Set<string>();
   results = results.filter(r => {
     const nameLower = r.name.toLowerCase();
+    // Distinct meetings can share a name across locations, so key real
+    // meetings by name + place rather than name alone
+    const dedupeKey = r.isVerifiedSchedule
+      ? `${nameLower}|${(r.address || r.conferenceUrl || r.location || '').toLowerCase()}`
+      : nameLower;
 
-    // Check exact match
-    if (seen.has(nameLower)) return false;
+    if (seen.has(dedupeKey)) return false;
 
-    // Check if this is a known organization in different format
-    const isKnownOrg = KNOWN_ORGS.some(org => nameLower.includes(org) || org.includes(nameLower.split(' ')[0]));
-    if (isKnownOrg) {
-      for (const existingKey of seen) {
-        if (KNOWN_ORGS.some(org => existingKey.includes(org) && nameLower.includes(org))) {
-          return false; // Duplicate of known org in different format
+    // Collapse known national organizations that appear in different formats
+    if (!r.isVerifiedSchedule) {
+      const isKnownOrg = KNOWN_ORGS.some(org => nameLower.includes(org) || org.includes(nameLower.split(' ')[0]));
+      if (isKnownOrg) {
+        for (const existingKey of seen) {
+          if (KNOWN_ORGS.some(org => existingKey.includes(org) && nameLower.includes(org))) {
+            return false; // Duplicate of known org in different format
+          }
         }
       }
     }
 
-    seen.add(nameLower);
+    seen.add(dedupeKey);
     return true;
   });
 
-  // Sort
+  // Sort - verified meeting schedules rank highest (most actionable)
   if (sortBy === SortOption.NEAREST) {
     results.sort((a, b) => {
+      const aSched = a.isVerifiedSchedule ? 1 : 0;
+      const bSched = b.isVerifiedSchedule ? 1 : 0;
+      if (bSched !== aSched) return bSched - aSched;
       const aHasAddress = a.address ? 1 : 0;
       const bHasAddress = b.address ? 1 : 0;
       if (bHasAddress !== aHasAddress) return bHasAddress - aHasAddress;
@@ -448,8 +605,8 @@ export const searchSupportGroups = async (
     });
   } else {
     results.sort((a, b) => {
-      const aScore = (a.phoneNumber ? 2 : 0) + (a.address ? 2 : 0) + (a.rating ? 1 : 0);
-      const bScore = (b.phoneNumber ? 2 : 0) + (b.address ? 2 : 0) + (b.rating ? 1 : 0);
+      const aScore = (a.isVerifiedSchedule ? 4 : 0) + (a.phoneNumber ? 2 : 0) + (a.address ? 2 : 0) + (a.rating ? 1 : 0);
+      const bScore = (b.isVerifiedSchedule ? 4 : 0) + (b.phoneNumber ? 2 : 0) + (b.address ? 2 : 0) + (b.rating ? 1 : 0);
       if (bScore !== aScore) return bScore - aScore;
       return (b.rating || 0) - (a.rating || 0);
     });

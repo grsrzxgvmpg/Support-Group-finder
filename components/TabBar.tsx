@@ -5,45 +5,50 @@ import { Search, Heart, Settings } from 'lucide-react';
 interface TabBarProps {
   activeTab: AppTab;
   onTabChange: (tab: AppTab) => void;
+  savedCount?: number;
 }
 
-export const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange }) => {
+const TABS: { tab: AppTab; label: string; Icon: typeof Search }[] = [
+  { tab: AppTab.SEARCH, label: 'Search', Icon: Search },
+  { tab: AppTab.SAVED, label: 'Saved', Icon: Heart },
+  { tab: AppTab.SETTINGS, label: 'Settings', Icon: Settings }
+];
+
+export const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange, savedCount = 0 }) => {
   return (
-    <div className="fixed bottom-0 left-0 right-0 glass-panel border-t border-gray-200 pb-5 pt-3 px-6 z-50">
+    <nav
+      aria-label="Main navigation"
+      className="fixed bottom-0 left-0 right-0 glass-panel border-t border-gray-200 pt-3 px-6 z-50"
+      style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 1.25rem)' }}
+    >
       <div className="flex justify-between items-center max-w-md mx-auto">
-        <button
-          type="button"
-          onClick={() => onTabChange(AppTab.SEARCH)}
-          className={`flex flex-col items-center space-y-1 ${
-            activeTab === AppTab.SEARCH ? 'text-teal-600' : 'text-gray-400'
-          }`}
-        >
-          <Search size={24} strokeWidth={activeTab === AppTab.SEARCH ? 2.5 : 2} />
-          <span className="text-[10px] font-medium">Search</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onTabChange(AppTab.SAVED)}
-          className={`flex flex-col items-center space-y-1 ${
-            activeTab === AppTab.SAVED ? 'text-teal-600' : 'text-gray-400'
-          }`}
-        >
-          <Heart size={24} strokeWidth={activeTab === AppTab.SAVED ? 2.5 : 2} />
-          <span className="text-[10px] font-medium">Saved</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onTabChange(AppTab.SETTINGS)}
-          className={`flex flex-col items-center space-y-1 ${
-            activeTab === AppTab.SETTINGS ? 'text-teal-600' : 'text-gray-400'
-          }`}
-        >
-          <Settings size={24} strokeWidth={activeTab === AppTab.SETTINGS ? 2.5 : 2} />
-          <span className="text-[10px] font-medium">Settings</span>
-        </button>
+        {TABS.map(({ tab, label, Icon }) => {
+          const isActive = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => onTabChange(tab)}
+              aria-label={label}
+              aria-current={isActive ? 'page' : undefined}
+              className={`relative flex flex-col items-center space-y-1 px-4 py-1 rounded-lg transition-colors ${
+                isActive ? 'text-teal-600' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              <Icon size={24} strokeWidth={isActive ? 2.5 : 2} aria-hidden="true" />
+              {tab === AppTab.SAVED && savedCount > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-1 right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-teal-600 text-white text-[9px] font-bold flex items-center justify-center"
+                >
+                  {savedCount > 99 ? '99+' : savedCount}
+                </span>
+              )}
+              <span className="text-[10px] font-medium">{label}</span>
+            </button>
+          );
+        })}
       </div>
-    </div>
+    </nav>
   );
 };
